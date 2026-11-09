@@ -1110,7 +1110,7 @@ export const ChatPage: React.FC = () => {
         /* Contenedor de mensajes con scroll */
         <div
           ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto px-3 py-2 space-y-1 flex flex-col"
+          className="flex-1 overflow-y-auto px-4 pt-1 pb-3 flex flex-col"
         >
           {hasMoreOlder && (
             <div className="text-center py-2">
@@ -1150,6 +1150,9 @@ export const ChatPage: React.FC = () => {
                   : null;
 
               const showDateSeparator = currentMsgDate !== prevMsgDate;
+              // Mensajes seguidos de la misma persona van juntos (sin colita y con poco espacio)
+              const isFirstInGroup =
+                index === 0 || showDateSeparator || messages[index - 1].sender_id !== msg.sender_id;
 
               return (
                 <React.Fragment key={msg.id}>
@@ -1168,6 +1171,7 @@ export const ChatPage: React.FC = () => {
                     partnerName={partnerName}
                     reactions={reactions[msg.id] || []}
                     highlighted={highlightId === msg.id}
+                    isFirstInGroup={isFirstInGroup}
                     onOpenActions={setActionMsg}
                     onQuoteClick={goToMessage}
                     onReactionClick={toggleReaction}
