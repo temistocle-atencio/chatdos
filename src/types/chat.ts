@@ -25,6 +25,8 @@ export interface MessagePayload {
     height?: number;
     duration?: number;
     thumb?: string;
+    name?: string; // nombre del archivo (canciones)
+    music?: boolean; // true = archivo de audio elegido del celular, false = nota de voz
   };
 }
 
