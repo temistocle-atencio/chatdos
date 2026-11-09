@@ -1,7 +1,22 @@
+// Copia corta del mensaje que se responde. Va cifrada dentro del mensaje,
+// así la cita se ve aunque el original no esté cargado en pantalla.
+export interface ReplyPreview {
+  senderId: string;
+  text: string;
+  kind: 'text' | 'image' | 'video' | 'audio';
+}
+
+export interface Reaction {
+  message_id: string;
+  user_id: string;
+  emoji: string;
+}
+
 export interface MessagePayload {
   v: number;
   text?: string;
   sentAt: number;
+  replyPreview?: ReplyPreview;
   media?: {
     key: string; // AES-GCM raw base64
     mime: string;
