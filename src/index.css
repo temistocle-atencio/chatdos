@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* El modo oscuro lo decide el botón de la app (clase "dark" en <html>), no solo el sistema */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-brand-blue: #005198;
   --color-brand-deep: #003A73;
