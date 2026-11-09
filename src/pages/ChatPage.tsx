@@ -24,6 +24,7 @@ import {
   EyeOff,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { clearChatNotifications, notifyPartner, playIncoming, updateBadge } from '../lib/push';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { MessageItem } from '../components/MessageItem';
@@ -537,6 +538,8 @@ export const ChatPage: React.FC = () => {
             safeMarkDelivered();
             if (!document.hidden) {
               safeMarkRead(chatId);
+              playIncoming('chat');
+              setTimeout(updateBadge, 1500);
             }
           }
 
@@ -657,6 +660,7 @@ export const ChatPage: React.FC = () => {
     safeMarkDelivered();
     safeMarkRead(chatId);
     safeTouchLastSeen();
+    clearChatNotifications(chatId);
 
     // touch_last_seen cada 60 s con la app visible
     const interval = setInterval(() => {
@@ -671,6 +675,7 @@ export const ChatPage: React.FC = () => {
         safeTouchLastSeen();
         safeMarkDelivered();
         safeMarkRead(chatId);
+        clearChatNotifications(chatId);
       } else {
         // En visibilitychange a 'hidden': touch_last_seen
         safeTouchLastSeen();
@@ -794,6 +799,7 @@ export const ChatPage: React.FC = () => {
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, isPending: false } : m))
       );
+      notifyPartner(messageId);
     } catch (err) {
       console.error('[ChatDos] Error en handleSendMessage:', err);
       setMessages((prev) =>
@@ -1019,6 +1025,7 @@ export const ChatPage: React.FC = () => {
         { onConflict: 'id', ignoreDuplicates: true }
       );
       if (error) throw error;
+      notifyPartner(messageId);
       retryRef.current.delete(messageId);
       setUploads((u) => {
         const n = { ...u };

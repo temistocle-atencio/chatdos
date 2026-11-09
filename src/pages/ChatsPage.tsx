@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UserPlus, MessageSquare, Settings2, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { playIncoming, updateBadge } from '../lib/push';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { getLocalPrivateKey, getChatKey, decryptJSON } from '../lib/crypto';
@@ -177,8 +178,13 @@ export const ChatsPage: React.FC = () => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'messages' },
-        () => {
+        (cambio) => {
+          const nuevo = cambio.new as { sender_id?: string } | null;
+          if (cambio.eventType === 'INSERT' && nuevo?.sender_id && nuevo.sender_id !== user?.id && !document.hidden) {
+            playIncoming('list');
+          }
           fetchChats();
+          setTimeout(updateBadge, 1000);
         }
       )
       .subscribe();
@@ -186,7 +192,7 @@ export const ChatsPage: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchChats]);
+  }, [fetchChats, user?.id]);
 
   return (
     <div className="flex-1 flex flex-col relative pb-20">

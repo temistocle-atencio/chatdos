@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Settings, Moon, Sun, Monitor, LogOut, Info } from 'lucide-react';
 import { useTheme, ThemePreference } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { NotificacionesAjustes } from '../components/NotificacionesAjustes';
 
 export const AjustesPage: React.FC = () => {
   const { theme, setTheme } = useTheme();
@@ -60,6 +61,8 @@ export const AjustesPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <NotificacionesAjustes />
 
       {/* Sección Privacidad: qué se cifra y qué queda sin cifrar según contrato */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
