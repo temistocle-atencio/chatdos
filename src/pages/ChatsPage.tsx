@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserPlus, MessageSquare, Settings2, RefreshCw } from 'lucide-react';
+import { UserPlus, MessageSquare, Settings2, RefreshCw, BellOff } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { playIncoming, updateBadge } from '../lib/push';
+import { leerSilencios } from '../lib/mute';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { getLocalPrivateKey, getChatKey, decryptJSON } from '../lib/crypto';
@@ -14,6 +15,7 @@ interface ChatItemWithPreview extends ChatItem {
   lastMessageText?: string;
   lastMessageTime?: string;
   unreadCount?: number;
+  muted?: boolean;
 }
 
 export const ChatsPage: React.FC = () => {
@@ -23,6 +25,7 @@ export const ChatsPage: React.FC = () => {
   const [chats, setChats] = useState<ChatItemWithPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const silenciosRef = useRef<Record<string, string>>({});
 
   const fetchChats = useCallback(async () => {
     if (!user) return;
@@ -70,6 +73,10 @@ export const ChatsPage: React.FC = () => {
 
       const profileMap = new Map<string, Profile>();
       (profiles || []).forEach((p: Profile) => profileMap.set(p.id, p));
+
+      // Chats que silencié
+      const silencios = await leerSilencios().catch(() => ({} as Record<string, string>));
+      silenciosRef.current = silencios;
 
       // 4. Obtener mi llave privada para descifrar últimos mensajes
       const myPrivateKey = await getLocalPrivateKey(user.id);
@@ -145,6 +152,7 @@ export const ChatsPage: React.FC = () => {
           lastMessageText,
           lastMessageTime,
           unreadCount,
+          muted: !!silencios[m.chat_id],
         });
       }
 
@@ -179,8 +187,9 @@ export const ChatsPage: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'messages' },
         (cambio) => {
-          const nuevo = cambio.new as { sender_id?: string } | null;
-          if (cambio.eventType === 'INSERT' && nuevo?.sender_id && nuevo.sender_id !== user?.id && !document.hidden) {
+          const nuevo = cambio.new as { sender_id?: string; chat_id?: string } | null;
+          const silenciado = !!(nuevo?.chat_id && silenciosRef.current[nuevo.chat_id] && new Date(silenciosRef.current[nuevo.chat_id]).getTime() > Date.now());
+          if (cambio.eventType === 'INSERT' && nuevo?.sender_id && nuevo.sender_id !== user?.id && !document.hidden && !silenciado) {
             playIncoming('list');
           }
           fetchChats();
@@ -269,6 +278,10 @@ export const ChatsPage: React.FC = () => {
                       <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] truncate">
                         {item.lastMessageText || `@${item.partner.username}`}
                       </p>
+
+                      {item.muted && (
+                        <BellOff className="w-3.5 h-3.5 text-[#5B6670] dark:text-[#E3E7EC] shrink-0" strokeWidth={2} aria-label="Silenciado" />
+                      )}
 
                       {/* Contador de no leídos (como texto destacado según regla estricta de marca "sin píldoras rellenas") */}
                       {item.unreadCount !== undefined && item.unreadCount > 0 && (

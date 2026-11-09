@@ -22,8 +22,11 @@ import {
   Trash2,
   Eye,
   EyeOff,
+  Bell,
+  BellOff,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, textoSilencio } from '../lib/mute';
 import { clearChatNotifications, notifyPartner, playIncoming, updateBadge } from '../lib/push';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
@@ -129,6 +132,11 @@ export const ChatPage: React.FC = () => {
   const [confirmDeleteAll, setConfirmDeleteAll] = useState<DecryptedMessage | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // Silenciar chat
+  const [silencio, setSilencio] = useState<string | null>(null);
+  const [silencioOpen, setSilencioOpen] = useState(false);
+  const silencioRef = useRef<string | null>(null);
+  silencioRef.current = silencio;
   const messageIdsRef = useRef<Set<string>>(new Set());
 
   // ETAPA 6: fotos, videos y audios
@@ -538,7 +546,7 @@ export const ChatPage: React.FC = () => {
             safeMarkDelivered();
             if (!document.hidden) {
               safeMarkRead(chatId);
-              playIncoming('chat');
+              if (!estaSilenciado(silencioRef.current)) playIncoming('chat');
               setTimeout(updateBadge, 1500);
             }
           }
@@ -651,6 +659,24 @@ export const ChatPage: React.FC = () => {
       }
     };
   }, [chatId, user, partner?.id, chatKey, decryptSingleMessage]);
+
+  // Leer si este chat está silenciado
+  useEffect(() => {
+    if (!chatId) return;
+    leerSilencio(chatId).then(setSilencio).catch(() => {});
+  }, [chatId]);
+
+  const cambiarSilencio = async (opcion: (typeof OPCIONES_SILENCIO)[number]['id'] | null) => {
+    if (!chatId) return;
+    setSilencioOpen(false);
+    try {
+      const hasta = await guardarSilencio(chatId, opcion);
+      setSilencio(hasta);
+      setToast(hasta ? textoSilencio(hasta) : 'Notificaciones activadas');
+    } catch {
+      setToast('No se pudo cambiar el silencio');
+    }
+  };
 
   // 5. Manejo de visibilidad y RPCs según contrato estricto
   useEffect(() => {
@@ -1310,6 +1336,9 @@ export const ChatPage: React.FC = () => {
                 {hasPartnerKey && (
                   <ShieldCheck className="w-3.5 h-3.5 text-white/90 shrink-0" strokeWidth={2} />
                 )}
+                {silencio && (
+                  <BellOff className="w-3.5 h-3.5 text-white/75 shrink-0" strokeWidth={2} aria-label="Chat silenciado" />
+                )}
               </h1>
               <div className="h-4 flex items-center">
                 {renderHeaderStatus()}
@@ -1357,6 +1386,22 @@ export const ChatPage: React.FC = () => {
                     <div className="my-1 border-t border-[#E3E7EC] dark:border-[#003A73]" />
                   </>
                 )}
+
+                <button
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    if (silencio) cambiarSilencio(null);
+                    else setSilencioOpen(true);
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                >
+                  {silencio ? (
+                    <Bell className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+                  ) : (
+                    <BellOff className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+                  )}
+                  <span>{silencio ? 'Activar notificaciones' : 'Silenciar notificaciones'}</span>
+                </button>
 
                 <button
                   onClick={() => {
@@ -1766,6 +1811,44 @@ export const ChatPage: React.FC = () => {
       )}
 
       {/* Confirmar "Eliminar para todos" */}
+      {silencioOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" onClick={() => setSilencioOpen(false)}>
+          <div
+            className="w-full max-w-sm bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] p-5"
+            style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-['Poppins'] font-semibold text-base text-[#003A73] dark:text-white mb-1">
+              Silenciar notificaciones
+            </h3>
+            <p className="text-sm font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] mb-4">
+              Los mensajes seguirán llegando, pero sin avisos ni sonido. {partnerName} no se enterará.
+            </p>
+            <div className="flex flex-col gap-2">
+              {OPCIONES_SILENCIO.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => cambiarSilencio(o.id)}
+                  className="h-11 w-full rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] text-left px-4 font-['Inter'] text-sm text-[#1F2933] dark:text-white hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] transition-colors"
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => setSilencioOpen(false)}
+                className="h-10 px-4 rounded-[5px] font-['Poppins'] font-semibold text-sm text-[#005198] dark:text-white"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmDeleteAll && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setConfirmDeleteAll(null)}>
           <div

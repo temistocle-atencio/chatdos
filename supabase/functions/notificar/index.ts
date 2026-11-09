@@ -67,6 +67,17 @@ Deno.serve(async (req) => {
     const destino = (miembros ?? []).map((m) => m.user_id).find((id) => id !== yo);
     if (!destino) return responder({ ok: true, omitido: 'sin destino' });
 
+    // ¿La otra persona silenció este chat? Entonces no se le avisa.
+    const { data: silencio } = await servicio
+      .from('chat_mutes')
+      .select('muted_until')
+      .eq('user_id', destino)
+      .eq('chat_id', msg.chat_id)
+      .maybeSingle();
+    if (silencio && new Date(silencio.muted_until).getTime() > Date.now()) {
+      return responder({ ok: true, omitido: 'silenciado' });
+    }
+
     const { data: perfil } = await servicio.from('profiles').select('display_name').eq('id', yo).maybeSingle();
 
     // Mensajes sin leer de la otra persona (para el número en el ícono de la app)
