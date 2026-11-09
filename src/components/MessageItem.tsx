@@ -14,6 +14,8 @@ interface MessageItemProps {
   isFirstInGroup?: boolean;
   onOpenActions: (message: DecryptedMessage) => void;
   onSwipeReply?: (message: DecryptedMessage) => void;
+  // Foto, video o audio del mensaje (lo arma la pantalla del chat)
+  media?: React.ReactNode;
   onQuoteClick: (messageId: string) => void;
   onReactionClick: (message: DecryptedMessage, emoji: string) => void;
 }
@@ -31,6 +33,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   isFirstInGroup = true,
   onOpenActions,
   onSwipeReply,
+  media,
   onQuoteClick,
   onReactionClick,
 }) => {
@@ -203,7 +206,26 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       );
     }
 
-    const segments = parseTextWithLinks(message.payload?.text || '');
+    const text = message.payload?.text || '';
+
+    // Foto, video o audio: el archivo y debajo el texto (si tiene) con la hora
+    if (media) {
+      return (
+        <>
+          {media}
+          {text ? (
+            <div className="mt-1 text-[14px] leading-[19px] font-['Inter'] break-words whitespace-pre-wrap max-w-[240px]">
+              {text}
+              {metadata}
+            </div>
+          ) : (
+            <div className="flow-root">{metadata}</div>
+          )}
+        </>
+      );
+    }
+
+    const segments = parseTextWithLinks(text);
     return (
       <div className="text-[14px] leading-[19px] font-['Inter'] break-words whitespace-pre-wrap">
         {segments.map((seg, idx) => {
