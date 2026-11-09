@@ -132,7 +132,7 @@ export const AppLayout: React.FC = () => {
                             }}
                             className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
                           >
-                            <MessageSquare className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                            <MessageSquare className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                             <span>Mis Chats</span>
                           </button>
 
@@ -143,7 +143,7 @@ export const AppLayout: React.FC = () => {
                             }}
                             className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
                           >
-                            <UserPlus className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                            <UserPlus className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                             <span>Nuevo Invitado</span>
                           </button>
 
@@ -158,7 +158,7 @@ export const AppLayout: React.FC = () => {
                         }}
                         className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
                       >
-                        <User className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                        <User className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                         <span>Mi Perfil</span>
                       </button>
 
@@ -169,7 +169,7 @@ export const AppLayout: React.FC = () => {
                         }}
                         className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
                       >
-                        <Settings className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                        <Settings className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                         <span>Ajustes</span>
                       </button>
 

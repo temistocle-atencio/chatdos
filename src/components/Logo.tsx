@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTheme } from '../context/ThemeContext';
 
 export interface LogoProps {
   /**
@@ -20,11 +21,15 @@ export interface LogoProps {
 }
 
 export const Logo: React.FC<LogoProps> = ({
-  variant = 'color',
+  variant: variantProp = 'color',
   layout = 'horizontal',
   cubeHeight = 36,
   className = '',
 }) => {
+  // En modo oscuro la versión de color no tiene contraste: se usa la blanca (regla del manual)
+  const { resolvedTheme } = useTheme();
+  const variant = resolvedTheme === 'dark' ? 'white' : variantProp;
+
   // Dimensiones del cubo según manual: ancho 259.8, alto 300 (ratio 0.866)
   const cubeWidth = cubeHeight * (259.8 / 300);
 
