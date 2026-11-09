@@ -163,7 +163,7 @@ export const InvitadoDetallePage: React.FC = () => {
   if (loading) {
     return (
       <div className="flex-1 flex flex-col justify-center items-center py-12 text-[#5B6670] dark:text-[#E3E7EC]">
-        <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+        <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
         <p className="text-xs font-['Inter']">Cargando datos del invitado...</p>
       </div>
     );
@@ -218,7 +218,7 @@ export const InvitadoDetallePage: React.FC = () => {
       </div>
 
       {errorMsg && (
-        <div className="p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] border border-[#F28C1B]/30 text-xs font-['Inter']">
+        <div className="p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter']">
           {errorMsg}
         </div>
       )}
@@ -233,7 +233,7 @@ export const InvitadoDetallePage: React.FC = () => {
       {/* Tarjeta para cambiar contraseña */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
         <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider flex items-center gap-2 mb-2">
-          <KeyRound className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+          <KeyRound className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
           <span>Cambiar Contraseña</span>
         </h3>
         <p className="text-xs text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mb-3">

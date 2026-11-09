@@ -61,7 +61,7 @@ export const RecuperarLlavePage: React.FC = () => {
         <div className="w-10 h-[3px] bg-[#F28C1B] mb-3"></div>
 
         <div className="flex items-center gap-2 mb-2 text-[#003A73] dark:text-white">
-          <KeyRound className="w-5 h-5 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+          <KeyRound className="w-5 h-5 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
           <h2 className="font-['Poppins'] font-bold text-lg">
             Dispositivo Nuevo Detectado
           </h2>
@@ -73,7 +73,7 @@ export const RecuperarLlavePage: React.FC = () => {
         </p>
 
         {errorMsg && (
-          <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] border border-[#F28C1B]/40 text-xs font-['Inter'] flex items-start gap-2">
+          <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter'] flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-[#B03030] shrink-0 mt-0.5" strokeWidth={2} />
             <span className="font-medium">{errorMsg}</span>
           </div>

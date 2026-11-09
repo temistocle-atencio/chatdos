@@ -65,7 +65,7 @@ export const CrearLlavePage: React.FC = () => {
         <div className="w-10 h-[3px] bg-[#F28C1B] mb-3"></div>
 
         <div className="flex items-center gap-2 mb-2 text-[#003A73] dark:text-white">
-          <KeyRound className="w-5 h-5 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+          <KeyRound className="w-5 h-5 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
           <h2 className="font-['Poppins'] font-bold text-lg">
             Activar Cifrado E2EE
           </h2>
@@ -77,7 +77,7 @@ export const CrearLlavePage: React.FC = () => {
           no pierdas el acceso a tus chats si cambias de celular, crearemos una <strong>contraseña de respaldo</strong>.
         </p>
 
-        <div className="p-3 mb-4 rounded-[5px] bg-[#FDEBD3] text-[#8A4B00] border border-[#F28C1B]/30 text-xs font-['Inter'] flex items-start gap-2 leading-relaxed">
+        <div className="p-3 mb-4 rounded-[5px] bg-[#FDEBD3] text-[#8A4B00] text-xs font-['Inter'] flex items-start gap-2 leading-relaxed">
           <ShieldAlert className="w-4 h-4 text-[#8A4B00] shrink-0 mt-0.5" strokeWidth={2} />
           <span>
             <strong>Advertencia fundamental:</strong> Esta contraseña es distinta a la de iniciar sesión y solo la conoces tú.
@@ -86,7 +86,7 @@ export const CrearLlavePage: React.FC = () => {
         </div>
 
         {errorMsg && (
-          <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] border border-[#F28C1B]/40 text-xs font-['Inter'] flex items-start gap-2">
+          <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter'] flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-[#B03030] shrink-0 mt-0.5" strokeWidth={2} />
             <span>{errorMsg}</span>
           </div>

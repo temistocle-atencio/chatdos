@@ -153,7 +153,7 @@ export const PruebaCifradoPage: React.FC = () => {
     <div className="flex-1 flex flex-col gap-4 pb-8">
       <div className="w-10 h-[3px] bg-[#F28C1B] mb-1"></div>
       <div className="flex items-center gap-2">
-        <ShieldCheck className="w-6 h-6 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+        <ShieldCheck className="w-6 h-6 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
         <h1 className="font-['Poppins'] font-bold text-xl text-[#003A73] dark:text-white">
           Prueba de Cifrado E2EE
         </h1>

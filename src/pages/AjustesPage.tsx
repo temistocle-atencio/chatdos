@@ -20,7 +20,7 @@ export const AjustesPage: React.FC = () => {
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
         <div className="w-10 h-[3px] bg-[#F28C1B] mb-3"></div>
         <h2 className="font-['Poppins'] font-semibold text-lg text-[#003A73] dark:text-white flex items-center gap-2">
-          <Settings className="w-5 h-5 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+          <Settings className="w-5 h-5 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
           <span>Ajustes</span>
         </h2>
         <p className="text-xs text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mt-1">
@@ -64,7 +64,7 @@ export const AjustesPage: React.FC = () => {
       {/* Sección Privacidad: qué se cifra y qué queda sin cifrar según contrato */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
         <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider flex items-center gap-2 mb-2">
-          <Info className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+          <Info className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
           <span>Privacidad y Cifrado</span>
         </h3>
 
@@ -93,7 +93,7 @@ export const AjustesPage: React.FC = () => {
           <div className="pt-2 flex justify-end">
             <button
               onClick={() => navigate('/prueba-cifrado')}
-              className="text-xs text-[#005198] dark:text-[#F28C1B] font-['Poppins'] font-semibold hover:underline flex items-center gap-1"
+              className="text-xs text-[#005198] dark:text-[#E3E7EC] font-['Poppins'] font-semibold hover:underline flex items-center gap-1"
             >
               <span>Diagnóstico de cifrado Web Crypto</span>
               <span>→</span>

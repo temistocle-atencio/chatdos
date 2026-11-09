@@ -166,7 +166,7 @@ export const PerfilPage: React.FC = () => {
       </p>
 
       {errorMsg && (
-        <div className="p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] border border-[#F28C1B]/30 text-xs font-['Inter'] flex items-start gap-2">
+        <div className="p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter'] flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-[#B03030] shrink-0 mt-0.5" strokeWidth={2} />
           <span>{errorMsg}</span>
         </div>
@@ -226,7 +226,7 @@ export const PerfilPage: React.FC = () => {
               <span className="block text-[10px] uppercase font-['Poppins'] text-[#5B6670] dark:text-[#E3E7EC]">
                 Usuario (no editable)
               </span>
-              <span className="font-mono text-xs font-semibold text-[#003A73] dark:text-[#F28C1B]">
+              <span className="font-mono text-xs font-semibold text-[#003A73] dark:text-[#E3E7EC]">
                 {profile?.username || '—'}
               </span>
             </div>

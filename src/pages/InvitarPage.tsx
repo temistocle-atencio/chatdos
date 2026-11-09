@@ -144,7 +144,7 @@ export const InvitarPage: React.FC = () => {
           <div className="p-3.5 bg-[#F2F4F7] dark:bg-[#1F2933] rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] font-mono text-xs text-[#1F2933] dark:text-white space-y-2 select-all">
             <div>
               <span className="text-[#5B6670] dark:text-[#E3E7EC]">Usuario:</span>{' '}
-              <span className="font-bold text-[#005198] dark:text-[#F28C1B]">{createdData.usuario}</span>
+              <span className="font-bold text-[#005198] dark:text-[#E3E7EC]">{createdData.usuario}</span>
             </div>
             <div>
               <span className="text-[#5B6670] dark:text-[#E3E7EC]">Contraseña:</span>{' '}
@@ -153,7 +153,7 @@ export const InvitarPage: React.FC = () => {
           </div>
 
           {/* Aviso según el manual de marca */}
-          <div className="p-3 rounded-[5px] bg-[#FDEBD3] text-[#8A4B00] border border-[#F28C1B]/30 flex items-start gap-2 text-xs font-['Inter']">
+          <div className="p-3 rounded-[5px] bg-[#FDEBD3] text-[#8A4B00] flex items-start gap-2 text-xs font-['Inter']">
             <AlertTriangle className="w-4 h-4 text-[#8A4B00] shrink-0 mt-0.5" strokeWidth={2} />
             <span>
               <strong>Importante:</strong> Esta contraseña no se vuelve a mostrar por motivos de seguridad. Cópiala ahora antes de salir.
@@ -196,7 +196,7 @@ export const InvitarPage: React.FC = () => {
       ) : (
         <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
           {errorMsg && (
-            <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] border border-[#F28C1B]/30 text-xs font-['Inter']">
+            <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter']">
               {errorMsg}
             </div>
           )}
@@ -243,7 +243,7 @@ export const InvitarPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={generatePassword}
-                  className="text-xs text-[#005198] dark:text-[#F28C1B] hover:underline flex items-center gap-1 font-['Poppins'] font-semibold"
+                  className="text-xs text-[#005198] dark:text-[#E3E7EC] hover:underline flex items-center gap-1 font-['Poppins'] font-semibold"
                 >
                   <RefreshCw className="w-3.5 h-3.5" strokeWidth={2} />
                   <span>Generar</span>

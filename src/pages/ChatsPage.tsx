@@ -205,7 +205,7 @@ export const ChatsPage: React.FC = () => {
       </div>
 
       {errorMsg && (
-        <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter'] border border-[#F28C1B]/30">
+        <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter']">
           {errorMsg}
         </div>
       )}
@@ -213,25 +213,18 @@ export const ChatsPage: React.FC = () => {
       {/* Lista estilo WhatsApp de conversaciones con último mensaje descifrado */}
       {loading ? (
         <div className="flex-1 flex flex-col justify-center items-center py-12 text-[#5B6670] dark:text-[#E3E7EC]">
-          <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+          <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
           <p className="text-xs font-['Inter']">Cargando conversaciones...</p>
         </div>
       ) : chats.length === 0 ? (
         <div className="flex-1 flex flex-col justify-center items-center py-12 px-4 text-center bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
-          <MessageSquare className="w-10 h-10 text-[#005198] dark:text-[#F28C1B] mb-3" strokeWidth={2} />
+          <MessageSquare className="w-10 h-10 text-[#005198] dark:text-[#E3E7EC] mb-3" strokeWidth={2} />
           <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white mb-1">
             No tienes invitados todavía
           </h3>
-          <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] max-w-xs mb-5">
-            Pulsa el botón naranja "Invitar" para crear la primera cuenta y comenzar una conversación privada.
+          <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] max-w-xs">
+            Pulsa "Invitar" para crear la primera cuenta y empezar una conversación privada.
           </p>
-          <button
-            onClick={() => navigate('/invitar')}
-            className="h-11 px-5 rounded-[5px] bg-[#F28C1B] text-[#1F2933] font-['Poppins'] font-semibold text-sm flex items-center gap-2 shadow-[0_4px_14px_rgba(242,140,27,0.3)] hover:brightness-105 active:scale-95 transition-all"
-          >
-            <UserPlus className="w-5 h-5 text-[#1F2933]" strokeWidth={2} />
-            <span>Invitar</span>
-          </button>
         </div>
       ) : (
         <>
@@ -267,7 +260,7 @@ export const ChatsPage: React.FC = () => {
 
                       {/* Contador de no leídos (como texto destacado según regla estricta de marca "sin píldoras rellenas") */}
                       {item.unreadCount !== undefined && item.unreadCount > 0 && (
-                        <span className="text-xs font-['Poppins'] font-bold text-[#005198] dark:text-[#F28C1B] shrink-0">
+                        <span className="text-xs font-['Poppins'] font-bold text-[#005198] dark:text-[#E3E7EC] shrink-0">
                           {item.unreadCount} nuevo{item.unreadCount > 1 ? 's' : ''}
                         </span>
                       )}
@@ -281,7 +274,7 @@ export const ChatsPage: React.FC = () => {
                     e.stopPropagation();
                     navigate(`/invitado/${item.partner.id}`);
                   }}
-                  className="p-2 rounded-[5px] text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-[#F28C1B] hover:bg-white dark:hover:bg-[#253240] transition-colors shrink-0"
+                  className="p-2 rounded-[5px] text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white hover:bg-white dark:hover:bg-[#253240] transition-colors shrink-0"
                   title="Gestionar cuenta de invitado"
                   aria-label="Gestionar cuenta"
                 >

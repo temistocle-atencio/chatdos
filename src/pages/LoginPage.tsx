@@ -69,7 +69,7 @@ export const LoginPage: React.FC = () => {
         </p>
 
         {errorMsg && (
-          <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] border border-[#F28C1B]/40 text-[#B03030] text-xs font-['Inter'] flex items-start gap-2">
+          <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter'] flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-[#B03030] shrink-0 mt-0.5" strokeWidth={2} />
             <span className="font-medium">{errorMsg}</span>
           </div>

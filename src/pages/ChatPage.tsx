@@ -656,7 +656,7 @@ export const ChatPage: React.FC = () => {
   if (loadingPartner) {
     return (
       <div className="flex-1 flex flex-col justify-center items-center py-12 text-[#5B6670] dark:text-[#E3E7EC]">
-        <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+        <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
         <p className="text-xs font-['Inter']">Cargando conversación...</p>
       </div>
     );
@@ -759,7 +759,7 @@ export const ChatPage: React.FC = () => {
                       }}
                       className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
                     >
-                      <MessageSquare className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                      <MessageSquare className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                       <span>Mis Chats</span>
                     </button>
                     <div className="my-1 border-t border-[#E3E7EC] dark:border-[#003A73]" />
@@ -773,7 +773,7 @@ export const ChatPage: React.FC = () => {
                   }}
                   className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
                 >
-                  <User className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                  <User className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                   <span>Mi Perfil</span>
                 </button>
 
@@ -784,7 +784,7 @@ export const ChatPage: React.FC = () => {
                   }}
                   className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
                 >
-                  <Settings className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                  <Settings className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                   <span>Ajustes</span>
                 </button>
 
@@ -809,7 +809,7 @@ export const ChatPage: React.FC = () => {
 
       {/* Alerta si la llave de la otra persona cambió */}
       {keyChangedAlert && (
-        <div className="p-2.5 bg-[#FDEBD3] text-[#8A4B00] border-b border-[#F28C1B]/40 text-xs font-['Inter'] flex items-start gap-2 leading-relaxed shrink-0">
+        <div className="p-2.5 bg-[#FDEBD3] text-[#8A4B00] text-xs font-['Inter'] flex items-start gap-2 leading-relaxed shrink-0">
           <ShieldAlert className="w-4 h-4 text-[#8A4B00] shrink-0 mt-0.5" strokeWidth={2} />
           <div className="flex-1">
             <strong>Aviso de seguridad:</strong> La llave pública de {partnerName} ha cambiado.
@@ -844,7 +844,7 @@ export const ChatPage: React.FC = () => {
               <button
                 onClick={loadOlderMessages}
                 disabled={loadingOlder}
-                className="px-3 py-1 bg-white dark:bg-[#253240] text-xs font-['Poppins'] font-medium text-[#005198] dark:text-[#F28C1B] rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] shadow-xs hover:bg-[#F2F4F7] transition-colors"
+                className="px-3 py-1 bg-white dark:bg-[#253240] text-xs font-['Poppins'] font-medium text-[#005198] dark:text-[#E3E7EC] rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] shadow-xs hover:bg-[#F2F4F7] transition-colors"
               >
                 {loadingOlder ? 'Cargando anteriores...' : 'Cargar mensajes anteriores'}
               </button>
@@ -853,7 +853,7 @@ export const ChatPage: React.FC = () => {
 
           {loadingMessages ? (
             <div className="flex-1 flex flex-col justify-center items-center text-[#5B6670] dark:text-[#E3E7EC]">
-              <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+              <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
               <p className="text-xs font-['Inter']">Descifrando mensajes...</p>
             </div>
           ) : messages.length === 0 ? (
@@ -921,7 +921,7 @@ export const ChatPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-[#F28C1B] rounded-[5px] transition-colors shrink-0"
+            className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white rounded-[5px] transition-colors shrink-0"
             title="Insertar emoji"
             aria-label="Selector de emojis"
           >
@@ -976,7 +976,7 @@ export const ChatPage: React.FC = () => {
           <div className="w-full max-w-sm rounded-[5px] bg-white dark:bg-[#253240] p-5 shadow-[0_2px_8px_rgba(0,0,0,0.15)] border border-[#E3E7EC] dark:border-[#003A73] space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-[#E3E7EC] dark:border-[#003A73]">
               <div className="flex items-center gap-2 text-[#003A73] dark:text-white">
-                <KeyRound className="w-5 h-5 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                <KeyRound className="w-5 h-5 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                 <h3 className="font-['Poppins'] font-bold text-sm">
                   Número de Seguridad
                 </h3>
@@ -995,7 +995,7 @@ export const ChatPage: React.FC = () => {
               </p>
             ) : calculatingSecurity ? (
               <div className="py-6 flex flex-col items-center justify-center text-[#5B6670] dark:text-[#E3E7EC]">
-                <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                 <span className="text-xs font-['Inter']">Calculando huella SHA-256 simétrica...</span>
               </div>
             ) : (
@@ -1006,7 +1006,7 @@ export const ChatPage: React.FC = () => {
                 </p>
 
                 <div className="p-3 bg-[#F2F4F7] dark:bg-[#1F2933] rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] select-all">
-                  <div className="grid grid-cols-3 gap-2 text-center font-mono text-xs font-bold text-[#003A73] dark:text-[#F28C1B] tracking-wider">
+                  <div className="grid grid-cols-3 gap-2 text-center font-mono text-xs font-bold text-[#003A73] dark:text-[#E3E7EC] tracking-wider">
                     {securityNumber?.split(' ').map((grp, idx) => (
                       <span key={idx} className="py-0.5 bg-white dark:bg-[#253240] rounded-[2px] shadow-xs">
                         {grp}
