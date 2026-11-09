@@ -316,6 +316,45 @@ export const ChatPage: React.FC = () => {
     });
   };
 
+  // ¿El usuario está viendo el final de la conversación?
+  const isNearBottom = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
+
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prev = [html.style.overflow, body.style.overflow, body.style.overscrollBehavior];
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    body.style.overscrollBehavior = 'none';
+
+    // Cuando el teclado cambia el alto visible, seguir mostrando el último mensaje
+    const vv = window.visualViewport;
+    let wasNearBottom = true;
+    const before = () => {
+      wasNearBottom = isNearBottom();
+    };
+    const after = () => {
+      window.scrollTo(0, 0);
+      if (wasNearBottom) {
+        const el = scrollContainerRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      }
+    };
+    vv?.addEventListener('resize', after);
+    scrollContainerRef.current?.addEventListener('scroll', before, { passive: true });
+    const container = scrollContainerRef.current;
+
+    return () => {
+      [html.style.overflow, body.style.overflow, body.style.overscrollBehavior] = prev;
+      vv?.removeEventListener('resize', after);
+      container?.removeEventListener('scroll', before);
+    };
+  }, [loadingPartner]);
+
   const scrollToBottom = () => {
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -958,9 +997,12 @@ export const ChatPage: React.FC = () => {
   const hasInputText = inputText.trim().length > 0;
 
   return (
-    <div className="flex-1 flex flex-col h-screen w-full relative bg-[#F2F4F7] dark:bg-[#1F2933]">
+    <div className="flex-1 flex flex-col h-full min-h-0 w-full relative overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933]">
       {/* 4. UNA SOLA CABECERA EN EL CHAT (fondo #003A73 con foto, nombre, estado, llave y menú) */}
-      <header className="bg-[#003A73] text-white px-3 h-14 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30">
+      <header
+        className="bg-[#003A73] text-white px-3 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30"
+        style={{ paddingTop: 'env(safe-area-inset-top)', height: 'calc(3.5rem + env(safe-area-inset-top))' }}
+      >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {/* Flecha para volver (SOLO si soy administrador) */}
           {isAdmin && (
@@ -1110,7 +1152,7 @@ export const ChatPage: React.FC = () => {
         /* Contenedor de mensajes con scroll */
         <div
           ref={scrollContainerRef}
-          className="flex-1 overflow-y-auto px-4 pt-1 pb-3 flex flex-col"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-1 pb-3 flex flex-col"
         >
           {hasMoreOlder && (
             <div className="text-center py-2">
@@ -1173,6 +1215,7 @@ export const ChatPage: React.FC = () => {
                     highlighted={highlightId === msg.id}
                     isFirstInGroup={isFirstInGroup}
                     onOpenActions={setActionMsg}
+                    onSwipeReply={startReply}
                     onQuoteClick={goToMessage}
                     onReactionClick={toggleReaction}
                   />
@@ -1202,7 +1245,10 @@ export const ChatPage: React.FC = () => {
       )}
 
       {/* 5. Barra inferior de entrada de texto */}
-      <div className="p-2 bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73] shrink-0">
+      <div
+        className="px-2 pt-2 bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73] shrink-0"
+        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+      >
         {(replyTo || editingMsg) && (
           <div className="flex items-center gap-2 mb-1.5 px-3 py-2 bg-white dark:bg-[#253240] rounded-[5px] border-l-[3px] border-[#005198] dark:border-[#E3E7EC] shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
             {editingMsg ? (
@@ -1250,6 +1296,9 @@ export const ChatPage: React.FC = () => {
             value={inputText}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
+            onFocus={() => {
+              if (isNearBottom()) setTimeout(scrollToBottom, 300);
+            }}
             placeholder={
               hasPartnerKey
                 ? 'Escribe un mensaje...'
