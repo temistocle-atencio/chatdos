@@ -98,7 +98,9 @@ export const ChatsPage: React.FC = () => {
             lastMessageTime = formatChatListTime(lastMsg.created_at);
 
             // Descifrar si hay llaves disponibles
-            if (myPrivateKey && partnerProfile.public_key) {
+            if (lastMsg.deleted_for_all) {
+              lastMessageText = 'Se eliminó este mensaje';
+            } else if (myPrivateKey && partnerProfile.public_key) {
               try {
                 const cKey = await getChatKey(
                   m.chat_id,
@@ -110,7 +112,8 @@ export const ChatsPage: React.FC = () => {
                   lastMsg.ciphertext,
                   lastMsg.iv
                 );
-                lastMessageText = payload.text || (lastMsg.kind !== 'text' ? `[${lastMsg.kind}]` : '');
+                const kindName = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' }[lastMsg.kind];
+                lastMessageText = payload.text || kindName || '';
               } catch {
                 lastMessageText = 'Mensaje cifrado';
               }
@@ -125,6 +128,7 @@ export const ChatsPage: React.FC = () => {
             .select('*', { count: 'exact', head: true })
             .eq('chat_id', m.chat_id)
             .neq('sender_id', user.id)
+            .eq('deleted_for_all', false)
             .is('read_at', null);
 
           unreadCount = count || 0;

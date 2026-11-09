@@ -15,12 +15,15 @@ import {
   Settings,
   LogOut,
   MessageSquare,
+  Reply,
+  Pencil,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { MessageItem } from '../components/MessageItem';
 import { EmojiPickerPopover } from '../components/EmojiPickerPopover';
+import { MessageActionsSheet } from '../components/MessageActionsSheet';
 import {
   getLocalPrivateKey,
   getChatKey,
@@ -39,7 +42,18 @@ import {
   safeTouchLastSeen,
 } from '../lib/rpc';
 import type { Profile } from '../types/database';
-import type { DbMessage, DecryptedMessage, MessagePayload } from '../types/chat';
+import type { DbMessage, DecryptedMessage, MessagePayload, Reaction, ReplyPreview } from '../types/chat';
+
+// Texto corto para mostrar un mensaje dentro de una cita o un aviso
+const shortText = (m: DecryptedMessage): string => {
+  if (m.deleted_for_all) return 'Mensaje eliminado';
+  const t = (m.payload?.text || '').replace(/\s+/g, ' ').trim();
+  if (t) return t.length > 120 ? t.slice(0, 120) + '…' : t;
+  if (m.kind === 'image') return 'Foto';
+  if (m.kind === 'video') return 'Video';
+  if (m.kind === 'audio') return 'Audio';
+  return 'Mensaje';
+};
 
 export const ChatPage: React.FC = () => {
   const { chatId } = useParams<{ chatId: string }>();
@@ -82,6 +96,18 @@ export const ChatPage: React.FC = () => {
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [securityNumber, setSecurityNumber] = useState<string | null>(null);
   const [calculatingSecurity, setCalculatingSecurity] = useState(false);
+
+  // ETAPA 5: reacciones, responder, editar y eliminar
+  const [reactions, setReactions] = useState<Record<string, Reaction[]>>({});
+  const [actionMsg, setActionMsg] = useState<DecryptedMessage | null>(null);
+  const [reactionPickerFor, setReactionPickerFor] = useState<DecryptedMessage | null>(null);
+  const [replyTo, setReplyTo] = useState<DecryptedMessage | null>(null);
+  const [editingMsg, setEditingMsg] = useState<DecryptedMessage | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState<DecryptedMessage | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const messageIdsRef = useRef<Set<string>>(new Set());
+  const messagesRef = useRef<DecryptedMessage[]>([]);
 
   // Referencia al canal activo de realtime para enviar broadcast 'typing'
   const activeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -177,6 +203,9 @@ export const ChatPage: React.FC = () => {
   // Función para descifrar un mensaje seguro
   const decryptSingleMessage = useCallback(
     async (msg: DbMessage, key: CryptoKey | null): Promise<DecryptedMessage> => {
+      if (msg.deleted_for_all) {
+        return { ...msg, payload: undefined, decryptionError: false };
+      }
       if (!key) {
         return { ...msg, decryptionError: true };
       }
@@ -224,6 +253,7 @@ export const ChatPage: React.FC = () => {
 
         if (isMounted) {
           setMessages(decryptedList);
+          loadReactions(decryptedList.map((m) => m.id));
           // Al abrir el chat se marca como leído
           safeMarkRead(chatId);
         }
@@ -243,6 +273,48 @@ export const ChatPage: React.FC = () => {
       isMounted = false;
     };
   }, [chatId, chatKey, decryptSingleMessage]);
+
+  // Guardar los ids de los mensajes en pantalla (para filtrar reacciones en tiempo real)
+  useEffect(() => {
+    messageIdsRef.current = new Set(messages.map((m) => m.id));
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // Ocultar el aviso corto después de 2,5 s
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Cargar las reacciones de un grupo de mensajes
+  const loadReactions = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const { data, error } = await supabase
+      .from('reactions')
+      .select('message_id, user_id, emoji')
+      .in('message_id', ids);
+    if (error) {
+      console.error('[ChatDos] reacciones', error);
+      return;
+    }
+    setReactions((prev) => {
+      const next = { ...prev };
+      ids.forEach((id) => delete next[id]);
+      (data as Reaction[]).forEach((r) => {
+        next[r.message_id] = [...(next[r.message_id] || []), r];
+      });
+      return next;
+    });
+  };
+
+  // Poner o quitar una reacción en la lista local
+  const applyReaction = (r: Reaction | null, messageId: string, userId: string) => {
+    setReactions((prev) => {
+      const list = (prev[messageId] || []).filter((x) => x.user_id !== userId);
+      return { ...prev, [messageId]: r ? [...list, r] : list };
+    });
+  };
 
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -285,6 +357,7 @@ export const ChatPage: React.FC = () => {
       decryptedOlder.reverse();
 
       setMessages((prev) => [...decryptedOlder, ...prev]);
+      loadReactions(decryptedOlder.map((m) => m.id));
 
       setTimeout(() => {
         if (scrollContainerRef.current) {
@@ -419,6 +492,20 @@ export const ChatPage: React.FC = () => {
             read_at: updatedDbMsg.read_at,
           });
 
+          // Si se editó o se eliminó, hay que volver a descifrar el contenido
+          const current = messagesRef.current.find((m) => m.id === updatedDbMsg.id);
+          if (
+            current &&
+            (current.edited_at !== updatedDbMsg.edited_at ||
+              current.deleted_for_all !== updatedDbMsg.deleted_for_all)
+          ) {
+            decryptSingleMessage(updatedDbMsg, chatKey).then((fresh) => {
+              if (!isMounted) return;
+              setMessages((prev) => prev.map((m) => (m.id === fresh.id ? fresh : m)));
+            });
+            return;
+          }
+
           // Actualiza delivered_at / read_at directamente en memoria sin volver a descifrar
           setMessages((prev) =>
             prev.map((m) => {
@@ -435,6 +522,26 @@ export const ChatPage: React.FC = () => {
               return m;
             })
           );
+        }
+      );
+
+      // Reacciones en tiempo real (RLS solo deja ver las de mis chats; filtramos las de este chat)
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reactions' },
+        (payload) => {
+          if (!isMounted) return;
+          if (payload.eventType === 'DELETE') {
+            const old = payload.old as Partial<Reaction>;
+            if (old.message_id && old.user_id && messageIdsRef.current.has(old.message_id)) {
+              applyReaction(null, old.message_id, old.user_id);
+            }
+            return;
+          }
+          const r = payload.new as Reaction;
+          if (messageIdsRef.current.has(r.message_id)) {
+            applyReaction(r, r.message_id, r.user_id);
+          }
         }
       );
 
@@ -520,6 +627,11 @@ export const ChatPage: React.FC = () => {
 
   // Manejo de teclado (Enter envía en computador, salto de línea en celular)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Escape' && (replyTo || editingMsg)) {
+      e.preventDefault();
+      cancelEditOrReply();
+      return;
+    }
     const isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     if (!isMobileDevice && e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -527,13 +639,24 @@ export const ChatPage: React.FC = () => {
     }
   };
 
-  // 6. Enviar mensaje cifrado
+  // 6. Enviar mensaje cifrado (o guardar la edición)
   const handleSendMessage = async () => {
     const textToSend = inputText.trim();
     if (!textToSend || !user || !chatId || !chatKey) return;
 
+    if (editingMsg) {
+      await saveEdit(editingMsg, textToSend);
+      return;
+    }
+
     const messageId = crypto.randomUUID();
     const sentAt = Date.now();
+    const replying = replyTo;
+    const replyPreview: ReplyPreview | undefined = replying
+      ? { senderId: replying.sender_id, text: shortText(replying), kind: replying.kind }
+      : undefined;
+
+    const payload: MessagePayload = { v: 1, text: textToSend, sentAt, ...(replyPreview ? { replyPreview } : {}) };
 
     // Mensaje optimista
     const optimisticMessage: DecryptedMessage = {
@@ -544,7 +667,7 @@ export const ChatPage: React.FC = () => {
       ciphertext: '',
       iv: '',
       media_path: null,
-      reply_to: null,
+      reply_to: replying ? replying.id : null,
       view_once: false,
       created_at: new Date(sentAt).toISOString(),
       edited_at: null,
@@ -552,16 +675,13 @@ export const ChatPage: React.FC = () => {
       delivered_at: null,
       read_at: null,
       viewed_at: null,
-      payload: {
-        v: 1,
-        text: textToSend,
-        sentAt,
-      },
+      payload,
       isPending: true,
     };
 
     setMessages((prev) => [...prev, optimisticMessage]);
     setInputText('');
+    setReplyTo(null);
     setShowEmojiPicker(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -569,12 +689,6 @@ export const ChatPage: React.FC = () => {
     scrollToBottom();
 
     try {
-      const payload: MessagePayload = {
-        v: 1,
-        text: textToSend,
-        sentAt,
-      };
-
       const encrypted = await encryptJSON(chatKey, payload);
 
       const { error } = await supabase.from('messages').upsert(
@@ -586,6 +700,7 @@ export const ChatPage: React.FC = () => {
           ciphertext: encrypted.ciphertext,
           iv: encrypted.iv,
           view_once: false,
+          reply_to: replying ? replying.id : null,
         },
         { onConflict: 'id', ignoreDuplicates: true }
       );
@@ -604,6 +719,164 @@ export const ChatPage: React.FC = () => {
         prev.map((m) => (m.id === messageId ? { ...m, isPending: true } : m))
       );
     }
+  };
+
+  // Limpiar el campo de texto
+  const resetInput = () => {
+    setInputText('');
+    setShowEmojiPicker(false);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+  };
+
+  // Guardar un mensaje editado: se vuelve a cifrar con el texto nuevo
+  const saveEdit = async (msg: DecryptedMessage, newText: string) => {
+    if (!chatKey) return;
+    if (newText === msg.payload?.text) {
+      setEditingMsg(null);
+      resetInput();
+      return;
+    }
+    const payload: MessagePayload = { ...(msg.payload as MessagePayload), text: newText };
+    try {
+      const encrypted = await encryptJSON(chatKey, payload);
+      const { data, error } = await supabase
+        .from('messages')
+        .update({ ciphertext: encrypted.ciphertext, iv: encrypted.iv })
+        .eq('id', msg.id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      const saved = data as DbMessage;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msg.id
+            ? { ...m, ciphertext: saved.ciphertext, iv: saved.iv, edited_at: saved.edited_at, payload }
+            : m
+        )
+      );
+      setEditingMsg(null);
+      resetInput();
+    } catch (err) {
+      console.error('[ChatDos] editar', err);
+      const text = (err as { message?: string })?.message || '';
+      setToast(text.includes('15 minutos') ? 'Ya pasaron los 15 minutos para editar' : 'No se pudo editar el mensaje');
+    }
+  };
+
+  // ----- Acciones del menú de un mensaje -----
+  const myReactionFor = (msgId: string): string | null =>
+    (reactions[msgId] || []).find((r) => r.user_id === user?.id)?.emoji || null;
+
+  // Poner, cambiar o quitar mi reacción
+  const toggleReaction = async (msg: DecryptedMessage, emoji: string) => {
+    if (!user || msg.deleted_for_all) return;
+    const current = myReactionFor(msg.id);
+    setActionMsg(null);
+    setReactionPickerFor(null);
+    if (current === emoji) {
+      applyReaction(null, msg.id, user.id);
+      const { error } = await supabase.from('reactions').delete().eq('message_id', msg.id).eq('user_id', user.id);
+      if (error) {
+        console.error('[ChatDos] quitar reacción', error);
+        loadReactions([msg.id]);
+      }
+      return;
+    }
+    const r: Reaction = { message_id: msg.id, user_id: user.id, emoji };
+    applyReaction(r, msg.id, user.id);
+    const { error } = await supabase.from('reactions').upsert(r, { onConflict: 'message_id,user_id' });
+    if (error) {
+      console.error('[ChatDos] reaccionar', error);
+      setToast('No se pudo guardar la reacción');
+      loadReactions([msg.id]);
+    }
+  };
+
+  const startReply = (msg: DecryptedMessage) => {
+    setActionMsg(null);
+    setEditingMsg(null);
+    setReplyTo(msg);
+    textareaRef.current?.focus();
+  };
+
+  const startEdit = (msg: DecryptedMessage) => {
+    setActionMsg(null);
+    setReplyTo(null);
+    setEditingMsg(msg);
+    setInputText(msg.payload?.text || '');
+    setTimeout(() => {
+      const el = textareaRef.current;
+      if (el) {
+        el.focus();
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+      }
+    }, 0);
+  };
+
+  const cancelEditOrReply = () => {
+    if (editingMsg) resetInput();
+    setEditingMsg(null);
+    setReplyTo(null);
+  };
+
+  const copyText = async (msg: DecryptedMessage) => {
+    setActionMsg(null);
+    try {
+      await navigator.clipboard.writeText(msg.payload?.text || '');
+      setToast('Texto copiado');
+    } catch {
+      setToast('No se pudo copiar');
+    }
+  };
+
+  // Eliminar para mí: se esconde solo en mi cuenta
+  const deleteForMe = async (msg: DecryptedMessage) => {
+    if (!user) return;
+    setActionMsg(null);
+    const backup = messages;
+    setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    const { error } = await supabase.from('message_hidden').insert({ user_id: user.id, message_id: msg.id });
+    if (error && error.code !== '23505') {
+      console.error('[ChatDos] eliminar para mí', error);
+      setMessages(backup);
+      setToast('No se pudo eliminar el mensaje');
+    }
+  };
+
+  // Eliminar para todos: primero el archivo (si tiene) y luego el contenido
+  const deleteForAll = async (msg: DecryptedMessage) => {
+    setConfirmDeleteAll(null);
+    if (msg.media_path) {
+      const { error: stErr } = await supabase.storage.from('media').remove([msg.media_path]);
+      if (stErr) console.error('[ChatDos] borrar archivo', stErr);
+    }
+    const { error } = await supabase.from('messages').update({ deleted_for_all: true }).eq('id', msg.id);
+    if (error) {
+      console.error('[ChatDos] eliminar para todos', error);
+      setToast('No se pudo eliminar el mensaje');
+      return;
+    }
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msg.id
+          ? { ...m, deleted_for_all: true, payload: undefined, ciphertext: '', iv: '', media_path: null }
+          : m
+      )
+    );
+    if (replyTo?.id === msg.id) setReplyTo(null);
+  };
+
+  // Ir al mensaje original de una cita
+  const goToMessage = (id: string) => {
+    const el = document.getElementById(`msg-${id}`);
+    if (!el) {
+      setToast('El mensaje original no está cargado. Sube y toca "Cargar mensajes anteriores".');
+      return;
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightId(id);
+    setTimeout(() => setHighlightId(null), 1600);
   };
 
   // Abrir modal de Número de Seguridad
@@ -888,7 +1161,17 @@ export const ChatPage: React.FC = () => {
                     </div>
                   )}
 
-                  <MessageItem message={msg} isMine={isMine} />
+                  <MessageItem
+                    message={msg}
+                    isMine={isMine}
+                    myId={user?.id || ''}
+                    partnerName={partnerName}
+                    reactions={reactions[msg.id] || []}
+                    highlighted={highlightId === msg.id}
+                    onOpenActions={setActionMsg}
+                    onQuoteClick={goToMessage}
+                    onReactionClick={toggleReaction}
+                  />
                 </React.Fragment>
               );
             })
@@ -916,6 +1199,34 @@ export const ChatPage: React.FC = () => {
 
       {/* 5. Barra inferior de entrada de texto */}
       <div className="p-2 bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73] shrink-0">
+        {(replyTo || editingMsg) && (
+          <div className="flex items-center gap-2 mb-1.5 px-3 py-2 bg-white dark:bg-[#253240] rounded-[5px] border-l-[3px] border-[#005198] dark:border-[#E3E7EC] shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
+            {editingMsg ? (
+              <Pencil className="w-4 h-4 shrink-0 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+            ) : (
+              <Reply className="w-4 h-4 shrink-0 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+            )}
+            <div className="flex-1 min-w-0">
+              <span className="block text-[11px] font-['Poppins'] font-semibold text-[#005198] dark:text-white">
+                {editingMsg
+                  ? 'Editando mensaje'
+                  : `Respondiendo a ${replyTo?.sender_id === user?.id ? 'ti' : partnerName}`}
+              </span>
+              <span className="block text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] truncate">
+                {shortText((editingMsg || replyTo) as DecryptedMessage)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={cancelEditOrReply}
+              className="w-8 h-8 flex items-center justify-center shrink-0 text-[#5B6670] dark:text-[#E3E7EC]"
+              aria-label="Cancelar"
+              title="Cancelar"
+            >
+              <X className="w-4 h-4" strokeWidth={2} />
+            </button>
+          </div>
+        )}
         <div className="flex items-end gap-2 bg-white dark:bg-[#253240] p-1.5 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
           {/* Botón de emojis */}
           <button
@@ -957,8 +1268,8 @@ export const ChatPage: React.FC = () => {
                 ? 'bg-[#F28C1B] text-[#1F2933] shadow-[0_2px_8px_rgba(0,0,0,0.12)] hover:brightness-105 active:scale-95 cursor-pointer'
                 : 'bg-[#E3E7EC] dark:bg-[#1F2933] text-[#5B6670] dark:text-[#5B6670] cursor-not-allowed'
             }`}
-            title="Enviar mensaje"
-            aria-label="Enviar mensaje"
+            title={editingMsg ? 'Guardar cambios' : 'Enviar mensaje'}
+            aria-label={editingMsg ? 'Guardar cambios' : 'Enviar mensaje'}
           >
             <Send
               className={`w-5 h-5 ${
@@ -969,6 +1280,78 @@ export const ChatPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Menú de acciones de un mensaje */}
+      {actionMsg && (
+        <MessageActionsSheet
+          message={actionMsg}
+          isMine={actionMsg.sender_id === user?.id}
+          myReaction={myReactionFor(actionMsg.id)}
+          onClose={() => setActionMsg(null)}
+          onReact={(emoji) => toggleReaction(actionMsg, emoji)}
+          onMoreReactions={() => {
+            setReactionPickerFor(actionMsg);
+            setActionMsg(null);
+          }}
+          onReply={() => startReply(actionMsg)}
+          onCopy={() => copyText(actionMsg)}
+          onEdit={() => startEdit(actionMsg)}
+          onDeleteForMe={() => deleteForMe(actionMsg)}
+          onDeleteForAll={() => {
+            setConfirmDeleteAll(actionMsg);
+            setActionMsg(null);
+          }}
+        />
+      )}
+
+      {/* Todos los emojis para reaccionar */}
+      {reactionPickerFor && (
+        <EmojiPickerPopover
+          onSelectEmoji={(emoji) => toggleReaction(reactionPickerFor, emoji)}
+          onClose={() => setReactionPickerFor(null)}
+        />
+      )}
+
+      {/* Confirmar "Eliminar para todos" */}
+      {confirmDeleteAll && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setConfirmDeleteAll(null)}>
+          <div
+            className="w-full max-w-sm bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-['Poppins'] font-semibold text-base text-[#003A73] dark:text-white mb-2">
+              ¿Eliminar para todos?
+            </h3>
+            <p className="text-sm font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] mb-5">
+              El mensaje se borrará también para {partnerName}. En el chat quedará el aviso "Se eliminó este mensaje".
+              No se puede deshacer.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteAll(null)}
+                className="h-10 px-4 rounded-[5px] font-['Poppins'] font-semibold text-sm text-[#005198] dark:text-white"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteForAll(confirmDeleteAll)}
+                className="h-10 px-4 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-sm"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Aviso corto */}
+      {toast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 max-w-[90%] px-4 py-2 rounded-[5px] bg-[#1F2933] text-white text-xs font-['Inter'] shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
+          {toast}
+        </div>
+      )}
 
       {/* Modal para verificar el Número de Seguridad */}
       {showSecurityModal && (
