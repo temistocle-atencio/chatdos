@@ -76,7 +76,7 @@ export const AppLayout: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F2F4F7] dark:bg-[#1F2933] text-[#1F2933] dark:text-[#FFFFFF] transition-colors">
+    <div className={`${isChatRoute ? 'h-[100dvh] overflow-hidden' : 'min-h-screen'} flex flex-col bg-[#F2F4F7] dark:bg-[#1F2933] text-[#1F2933] dark:text-[#FFFFFF] transition-colors`}>
       {/* Cabecera oficial: Fondo Azul Profundo #003A73 (se oculta en /chat/:chatId para dejar una sola cabecera) */}
       {!isChatRoute && (
         <header className="sticky top-0 z-40 bg-[#003A73] text-white shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
@@ -192,7 +192,7 @@ export const AppLayout: React.FC = () => {
       )}
 
       {/* Contenido principal: en chat ocupa todo el alto sin márgenes exteriores para cabecera limpia */}
-      <main className={`flex-1 w-full max-w-md mx-auto flex flex-col ${isChatRoute ? 'p-0 h-screen overflow-hidden' : 'px-4 py-4'}`}>
+      <main className={`flex-1 w-full max-w-md mx-auto flex flex-col ${isChatRoute ? 'p-0 h-full min-h-0 overflow-hidden' : 'px-4 py-4'}`}>
         <Outlet />
       </main>
     </div>

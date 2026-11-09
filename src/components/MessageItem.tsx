@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { Clock, AlertTriangle, Ban, ChevronDown, Check, CheckCheck } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Clock, AlertTriangle, Ban, ChevronDown, Check, CheckCheck, Reply } from 'lucide-react';
 import type { DecryptedMessage, Reaction } from '../types/chat';
 import { formatMessageTime, parseTextWithLinks } from '../lib/formatters';
 
@@ -13,6 +13,7 @@ interface MessageItemProps {
   // Primer mensaje de un grupo seguido de la misma persona: lleva la "colita" y más espacio arriba
   isFirstInGroup?: boolean;
   onOpenActions: (message: DecryptedMessage) => void;
+  onSwipeReply?: (message: DecryptedMessage) => void;
   onQuoteClick: (messageId: string) => void;
   onReactionClick: (message: DecryptedMessage, emoji: string) => void;
 }
@@ -29,6 +30,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   highlighted = false,
   isFirstInGroup = true,
   onOpenActions,
+  onSwipeReply,
   onQuoteClick,
   onReactionClick,
 }) => {
@@ -36,14 +38,56 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDeleted = message.deleted_for_all;
 
-  // Mantener presionado (celular)
-  const startPress = () => {
-    if (isDeleted && !isMine) return;
-    pressTimer.current = setTimeout(() => onOpenActions(message), LONG_PRESS_MS);
-  };
-  const cancelPress = () => {
+  // ----- Gestos en el celular -----
+  // Mantener presionado = abrir menú. Deslizar a la derecha = responder.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const swiping = useRef(false);
+  const [swipeX, setSwipeX] = useState(0);
+  const SWIPE_REPLY_PX = 60;
+  const canInteract = !(isDeleted && !isMine) && !message.isPending;
+
+  const clearPress = () => {
     if (pressTimer.current) clearTimeout(pressTimer.current);
     pressTimer.current = null;
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!canInteract) return;
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+    swiping.current = false;
+    pressTimer.current = setTimeout(() => {
+      pressTimer.current = null;
+      touchStart.current = null;
+      navigator.vibrate?.(15);
+      onOpenActions(message);
+    }, LONG_PRESS_MS);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const start = touchStart.current;
+    if (!start) return;
+    const t = e.touches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    // El dedo siempre tiembla un poco: solo cancelamos si se mueve más de 10 px
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) clearPress();
+    // Deslizar horizontal hacia la derecha (y no hacer scroll vertical)
+    if (onSwipeReply && !isDeleted && (swiping.current || (dx > 12 && Math.abs(dx) > Math.abs(dy) * 1.5))) {
+      swiping.current = true;
+      setSwipeX(Math.max(0, Math.min(dx, 90)));
+    }
+  };
+
+  const handleTouchEnd = () => {
+    clearPress();
+    if (swiping.current && swipeX >= SWIPE_REPLY_PX && onSwipeReply) {
+      navigator.vibrate?.(10);
+      onSwipeReply(message);
+    }
+    swiping.current = false;
+    touchStart.current = null;
+    setSwipeX(0);
   };
 
   // Clic derecho (computador)
@@ -215,13 +259,30 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     >
       <div
         onContextMenu={handleContextMenu}
-        onTouchStart={startPress}
-        onTouchEnd={cancelPress}
-        onTouchMove={cancelPress}
-        className={`group relative max-w-[85%] px-2 pt-1.5 pb-2 rounded-[5px] shadow-[0_1px_2px_rgba(0,0,0,0.12)] select-text ${bubbleColor} ${
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        style={{
+          transform: swipeX ? `translateX(${swipeX}px)` : undefined,
+          transition: swipeX ? 'none' : 'transform 150ms ease-out',
+          WebkitTouchCallout: 'none',
+        }}
+        className={`group relative max-w-[85%] px-2 pt-1.5 pb-2 rounded-[5px] shadow-[0_1px_2px_rgba(0,0,0,0.12)] select-none md:select-text ${bubbleColor} ${
           isFirstInGroup ? (isMine ? 'rounded-tr-none' : 'rounded-tl-none') : ''
         } ${highlighted ? 'outline outline-2 outline-[#005198] dark:outline-white' : ''}`}
       >
+        {/* Ícono que aparece al deslizar para responder */}
+        {swipeX > 0 && (
+          <span
+            className="absolute top-1/2 -translate-y-1/2 -left-9 w-7 h-7 flex items-center justify-center text-[#5B6670] dark:text-[#E3E7EC]"
+            style={{ opacity: Math.min(swipeX / SWIPE_REPLY_PX, 1) }}
+            aria-hidden="true"
+          >
+            <Reply className="w-5 h-5" strokeWidth={2} />
+          </span>
+        )}
+
         {/* Colita de la burbuja (solo el primer mensaje del grupo) */}
         {isFirstInGroup && (
           <svg
