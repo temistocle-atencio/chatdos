@@ -55,6 +55,45 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,woff,woff2}'],
           globIgnores: ['push-sw.js'],
           importScripts: ['push-sw.js'],
+          // Copias para usar sin internet (los archivos del chat se guardan cifrados)
+          runtimeCaching: [
+            {
+              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+              handler: 'StaleWhileRevalidate',
+              options: { cacheName: 'chatdos-fuentes-css' },
+            },
+            {
+              urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'chatdos-fuentes',
+                expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
+              // Fotos, videos y audios del chat: cada archivo tiene su propio nombre, no cambian
+              urlPattern: /\/storage\/v1\/object\/(authenticated\/)?media\//,
+              handler: 'CacheFirst',
+              method: 'GET',
+              options: {
+                cacheName: 'chatdos-archivos',
+                expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 60 },
+                cacheableResponse: { statuses: [200] },
+              },
+            },
+            {
+              // Fotos de perfil: se muestra la guardada y se actualiza por detrás
+              urlPattern: /\/storage\/v1\/object\/(authenticated\/)?profile\//,
+              handler: 'StaleWhileRevalidate',
+              method: 'GET',
+              options: {
+                cacheName: 'chatdos-perfiles',
+                expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 60 },
+                cacheableResponse: { statuses: [200] },
+              },
+            },
+          ],
         },
         devOptions: {
           enabled: true,

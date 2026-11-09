@@ -22,11 +22,13 @@ export const OfflineIndicator: React.FC = () => {
   if (isOnline) return null;
 
   return (
-    <div className="fixed bottom-16 left-4 right-4 z-50 max-w-md mx-auto p-2.5 rounded-[5px] bg-[#FDEBD3] text-[#8A4B00] shadow-[0_2px_8px_rgba(0,0,0,0.1)] flex items-center justify-between text-xs font-['Inter']">
-      <div className="flex items-center gap-2">
-        <WifiOff className="w-4 h-4 text-[#8A4B00] shrink-0" strokeWidth={2} />
-        <span>Sin conexión. Los mensajes se guardarán para enviarse al reconectar.</span>
-      </div>
+    <div
+      className="fixed left-1/2 -translate-x-1/2 z-50 max-w-[92%] px-3 py-1.5 rounded-[5px] bg-[#FDEBD3] text-[#8A4B00] shadow-[0_2px_8px_rgba(0,0,0,0.1)] flex items-center gap-2 text-xs font-['Inter'] pointer-events-none"
+      style={{ top: 'calc(env(safe-area-inset-top) + 4rem)' }}
+      role="status"
+    >
+      <WifiOff className="w-3.5 h-3.5 text-[#8A4B00] shrink-0" strokeWidth={2} />
+      <span>Sin conexión · lo que escribas se enviará al volver</span>
     </div>
   );
 };

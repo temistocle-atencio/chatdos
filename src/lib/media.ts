@@ -358,3 +358,15 @@ export async function downloadDecrypted(
   if (useCache) urlCache.set(messageId, url);
   return url;
 }
+
+/** Borra del celular la copia guardada de un archivo (para "ver una vez" y "eliminar para todos"). */
+export async function olvidarArchivoGuardado(path: string): Promise<void> {
+  try {
+    if (!('caches' in window)) return;
+    const cache = await caches.open('chatdos-archivos');
+    const claves = await cache.keys();
+    await Promise.all(claves.filter((r) => r.url.includes(path)).map((r) => cache.delete(r)));
+  } catch {
+    /* nada */
+  }
+}

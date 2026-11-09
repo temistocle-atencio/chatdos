@@ -26,6 +26,17 @@ import {
   BellOff,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import {
+  guardarChat,
+  guardarMensajes,
+  borrarMensajeLocal,
+  leerBandeja,
+  leerChat,
+  leerMensajes,
+  ponerEnBandeja,
+  quitarDeBandeja,
+  type Pendiente,
+} from '../lib/offline';
 import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, textoSilencio } from '../lib/mute';
 import { clearChatNotifications, notifyPartner, playIncoming, updateBadge } from '../lib/push';
 import { useAuth } from '../context/AuthContext';
@@ -49,6 +60,7 @@ import {
   forgetUrl,
   downloadDecrypted,
   formatDuration,
+  olvidarArchivoGuardado,
 } from '../lib/media';
 import {
   getLocalPrivateKey,
@@ -178,15 +190,48 @@ export const ChatPage: React.FC = () => {
     };
   }, [headerMenuOpen]);
 
+  // Al cambiar de chat se limpia la pantalla (no se mezclan mensajes de otro chat)
+  const chatAnteriorRef = useRef(chatId);
+  useEffect(() => {
+    if (chatAnteriorRef.current !== chatId) {
+      chatAnteriorRef.current = chatId;
+      setMessages([]);
+      setChatKey(null);
+    }
+  }, [chatId]);
+
   // 1. Cargar compañero de chat y derivar la llave de chat
   useEffect(() => {
     if (!chatId || !user) return;
 
     let isMounted = true;
 
+    let llaveDe: string | null = null;
+    // Mostrar a la otra persona y preparar la llave del chat (sirve sin internet)
+    const aplicarPartner = async (partnerProf: Profile) => {
+      if (!isMounted) return;
+      setPartner(partnerProf);
+      if (!partnerProf.public_key) return;
+      const pub = JSON.stringify(partnerProf.public_key);
+      if (llaveDe === pub) return; // ya está la llave para esta misma llave pública
+      llaveDe = pub;
+      const hasChanged = await checkPartnerKeyChange(partnerProf.id, partnerProf.public_key as JsonWebKey);
+      if (isMounted) setKeyChangedAlert(hasChanged);
+      const myPrivateKey = await getLocalPrivateKey(user.id);
+      if (myPrivateKey) {
+        const derived = await getChatKey(chatId, myPrivateKey, partnerProf.public_key as JsonWebKey);
+        if (isMounted) setChatKey(derived);
+      }
+    };
+
     const initChat = async () => {
       setLoadingPartner(true);
       setErrorMsg(null);
+      const guardado = await leerChat(chatId);
+      if (guardado) {
+        await aplicarPartner(guardado.partner);
+        if (isMounted) setLoadingPartner(false);
+      }
       try {
         // Buscar el otro participante
         const { data: memberData, error: memError } = await supabase
@@ -213,30 +258,12 @@ export const ChatPage: React.FC = () => {
 
         const partnerProf = profData as Profile;
         if (!isMounted) return;
-        setPartner(partnerProf);
-
-        // Verificar si la llave pública de la otra persona cambió
-        if (partnerProf.public_key) {
-          const hasChanged = await checkPartnerKeyChange(
-            partnerProf.id,
-            partnerProf.public_key as JsonWebKey
-          );
-          if (isMounted) setKeyChangedAlert(hasChanged);
-
-          // Derivar la llave simétrica del chat
-          const myPrivateKey = await getLocalPrivateKey(user.id);
-          if (myPrivateKey) {
-            const derived = await getChatKey(
-              chatId,
-              myPrivateKey,
-              partnerProf.public_key as JsonWebKey
-            );
-            if (isMounted) setChatKey(derived);
-          }
-        }
+        guardarChat(chatId, partnerProf);
+        await aplicarPartner(partnerProf);
       } catch (err: unknown) {
         console.error('[ChatDos] Error al iniciar chat:', err);
-        if (isMounted) {
+        // Sin internet pero con copia local: se sigue usando el chat normal
+        if (isMounted && !guardado) {
           setErrorMsg(err instanceof Error ? err.message : 'Error al conectar con el chat.');
         }
       } finally {
@@ -250,6 +277,108 @@ export const ChatPage: React.FC = () => {
       isMounted = false;
     };
   }, [chatId, user]);
+
+  // Bandeja de salida -> mensajes con relojito (los que aún no llegan al servidor)
+  const pendientesComoMensajes = async (bandeja: Pendiente[], yaEstan: DecryptedMessage[]) => {
+    const ids = new Set(yaEstan.map((m) => m.id));
+    const out: DecryptedMessage[] = [];
+    for (const p of bandeja) {
+      if (ids.has(p.id)) {
+        quitarDeBandeja(p.id); // el servidor ya lo tiene
+        continue;
+      }
+      const base = {
+        id: p.id,
+        chat_id: p.chatId,
+        sender_id: user?.id ?? '',
+        created_at: new Date(p.creado).toISOString(),
+        edited_at: null,
+        deleted_for_all: false,
+        delivered_at: null,
+        read_at: null,
+        viewed_at: null,
+        isPending: true,
+      };
+      if (p.fila) {
+        const d = await decryptSingleMessage({ ...(p.fila as unknown as DbMessage), ...base, media_path: null }, chatKey);
+        out.push({ ...d, isPending: true });
+      } else if (p.media) {
+        const info = p.media.info as Omit<PendingMedia, 'blob'>;
+        const media: PendingMedia = { ...info, blob: p.media.blob };
+        const payload = p.media.payload as MessagePayload;
+        if (!p.media.viewOnce) cacheLocalUrl(p.id, p.media.blob);
+        // Sin internet se muestra con el botón de reintentar
+        setUploads((u) => (u[p.id] ? u : { ...u, [p.id]: { pct: 0, failed: true } }));
+        if (!retryRef.current.has(p.id)) {
+          retryRef.current.set(p.id, { media, payload, viewOnce: p.media.viewOnce, replyId: p.media.replyId });
+        }
+        out.push({
+          ...base,
+          kind: info.kind,
+          ciphertext: '',
+          iv: '',
+          media_path: user ? mediaPath(p.chatId, user.id, p.id) : null,
+          reply_to: p.media.replyId,
+          view_once: p.media.viewOnce,
+          payload,
+        });
+      }
+    }
+    return out;
+  };
+
+  // Enviar lo que quedó en la bandeja (al abrir el chat y al volver el internet)
+  const enviandoBandejaRef = useRef(false);
+  const subiendoRef = useRef<Set<string>>(new Set()); // archivos que se están subiendo ahora
+  const enviarBandeja = async () => {
+    if (!chatId || enviandoBandejaRef.current || !navigator.onLine) return;
+    enviandoBandejaRef.current = true;
+    try {
+      for (const p of await leerBandeja(chatId)) {
+        // Lo recién enviado lo está mandando el envío normal: no se duplica
+        if (Date.now() - p.creado < 10000 || subiendoRef.current.has(p.id)) continue;
+        if (p.fila) {
+          const { error } = await supabase.from('messages').upsert(p.fila, { onConflict: 'id', ignoreDuplicates: true });
+          if (error) break; // sigue sin conexión: se intenta después
+          await quitarDeBandeja(p.id);
+          setMessages((prev) => prev.map((m) => (m.id === p.id ? { ...m, isPending: false } : m)));
+          notifyPartner(p.id);
+        } else if (p.media) {
+          const saved = retryRef.current.get(p.id);
+          if (saved) await uploadAndSave(p.id, saved.media, saved.payload, saved.viewOnce, saved.replyId);
+        }
+      }
+    } finally {
+      enviandoBandejaRef.current = false;
+    }
+  };
+  const enviarBandejaRef = useRef(enviarBandeja);
+  enviarBandejaRef.current = enviarBandeja;
+
+  // Al volver el internet (o al volver a la app) se envía lo pendiente
+  // y se vuelven a pedir los mensajes que pudieron llegar mientras tanto
+  const [recarga, setRecarga] = useState(0);
+  useEffect(() => {
+    let ocultoDesde = 0;
+    const alVolver = () => {
+      enviarBandejaRef.current();
+      setRecarga((n) => n + 1);
+    };
+    const alMostrar = () => {
+      if (document.hidden) {
+        ocultoDesde = Date.now();
+        return;
+      }
+      if (ocultoDesde && Date.now() - ocultoDesde > 60000) alVolver();
+      else enviarBandejaRef.current();
+    };
+    window.addEventListener('online', alVolver);
+    document.addEventListener('visibilitychange', alMostrar);
+    return () => {
+      window.removeEventListener('online', alVolver);
+      document.removeEventListener('visibilitychange', alMostrar);
+    };
+  }, []);
 
   // Función para descifrar un mensaje seguro
   const decryptSingleMessage = useCallback(
@@ -279,6 +408,20 @@ export const ChatPage: React.FC = () => {
 
     const loadInitialMessages = async () => {
       setLoadingMessages(true);
+
+      // 1) Primero lo guardado en el celular (aparece al instante, incluso sin internet)
+      const [guardados, bandeja] = await Promise.all([leerMensajes(chatId), leerBandeja(chatId)]);
+      if ((guardados.length || bandeja.length) && !messagesRef.current.some((m) => m.chat_id === chatId)) {
+        const locales = await Promise.all(guardados.map((m) => decryptSingleMessage(m, chatKey)));
+        const pendientes = await pendientesComoMensajes(bandeja, locales);
+        if (isMounted) {
+          setMessages([...locales, ...pendientes]);
+          setLoadingMessages(false);
+          scrollToBottom();
+        }
+      }
+
+      // 2) Luego lo del servidor
       try {
         const { data, error } = await supabase
           .from('messages')
@@ -296,14 +439,27 @@ export const ChatPage: React.FC = () => {
         if (rawList.length === 50) {
           if (isMounted) setHasMoreOlder(true);
         }
+        guardarMensajes(rawList);
 
         const decryptedList = await Promise.all(
           rawList.map((m) => decryptSingleMessage(m, chatKey))
         );
         decryptedList.reverse();
+        // Los que siguen en la bandeja de salida se muestran al final con el relojito
+        const pendientes = await pendientesComoMensajes(await leerBandeja(chatId), decryptedList);
 
         if (isMounted) {
-          setMessages(decryptedList);
+          // Se conservan los más viejos que ya estaban en pantalla (p. ej. al reconectar)
+          const desde = decryptedList[0]?.created_at;
+          const ids = new Set([...decryptedList, ...pendientes].map((m) => m.id));
+          setMessages((prev) => [
+            ...prev.filter(
+              (m) => m.chat_id === chatId && !ids.has(m.id) && !m.isPending && !!desde && m.created_at < desde
+            ),
+            ...decryptedList,
+            ...pendientes,
+          ]);
+          enviarBandeja();
           loadReactions(decryptedList.map((m) => m.id));
           // Al abrir el chat se marca como leído
           safeMarkRead(chatId);
@@ -323,7 +479,7 @@ export const ChatPage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [chatId, chatKey, decryptSingleMessage]);
+  }, [chatId, chatKey, decryptSingleMessage, recarga]);
 
   // Guardar los ids de los mensajes en pantalla (para filtrar reacciones en tiempo real)
   useEffect(() => {
@@ -440,6 +596,7 @@ export const ChatPage: React.FC = () => {
       if (rawList.length < 50) {
         setHasMoreOlder(false);
       }
+      guardarMensajes(rawList);
 
       const decryptedOlder = await Promise.all(
         rawList.map((m) => decryptSingleMessage(m, chatKey))
@@ -540,6 +697,7 @@ export const ChatPage: React.FC = () => {
           if (!isMounted) return;
           const newDbMsg = payload.new as DbMessage;
           console.log('[ChatDos] Nuevo INSERT en messages:', newDbMsg.id);
+          guardarMensajes([newDbMsg]);
 
           // Si es de la otra persona: marcar como entregado y como leído
           if (newDbMsg.sender_id !== user.id) {
@@ -579,6 +737,7 @@ export const ChatPage: React.FC = () => {
         (payload) => {
           if (!isMounted) return;
           const updatedDbMsg = payload.new as DbMessage;
+          guardarMensajes([updatedDbMsg]);
           console.log('[ChatDos] UPDATE en message checks:', updatedDbMsg.id, {
             delivered_at: updatedDbMsg.delivered_at,
             read_at: updatedDbMsg.read_at,
@@ -586,6 +745,8 @@ export const ChatPage: React.FC = () => {
 
           // Si se editó o se eliminó, hay que volver a descifrar el contenido
           const current = messagesRef.current.find((m) => m.id === updatedDbMsg.id);
+          // Si lo eliminaron para todos, también se borra la copia del archivo en este celular
+          if (updatedDbMsg.deleted_for_all && current?.media_path) olvidarArchivoGuardado(current.media_path);
           if (
             current &&
             (current.edited_at !== updatedDbMsg.edited_at ||
@@ -802,25 +963,26 @@ export const ChatPage: React.FC = () => {
 
     try {
       const encrypted = await encryptJSON(chatKey, payload);
+      const fila = {
+        id: messageId,
+        chat_id: chatId,
+        sender_id: user.id,
+        kind: 'text',
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        view_once: false,
+        reply_to: replying ? replying.id : null,
+      };
+      // Queda guardado en el celular hasta que el servidor lo reciba
+      await ponerEnBandeja({ id: messageId, chatId, creado: sentAt, fila });
 
-      const { error } = await supabase.from('messages').upsert(
-        {
-          id: messageId,
-          chat_id: chatId,
-          sender_id: user.id,
-          kind: 'text',
-          ciphertext: encrypted.ciphertext,
-          iv: encrypted.iv,
-          view_once: false,
-          reply_to: replying ? replying.id : null,
-        },
-        { onConflict: 'id', ignoreDuplicates: true }
-      );
+      const { error } = await supabase.from('messages').upsert(fila, { onConflict: 'id', ignoreDuplicates: true });
 
       if (error) {
         console.error('[ChatDos] error al enviar mensaje:', error);
         throw error;
       }
+      quitarDeBandeja(messageId);
 
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, isPending: false } : m))
@@ -949,6 +1111,8 @@ export const ChatPage: React.FC = () => {
     setActionMsg(null);
     const backup = messages;
     setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+    borrarMensajeLocal(msg.id);
+    quitarDeBandeja(msg.id);
     const { error } = await supabase.from('message_hidden').insert({ user_id: user.id, message_id: msg.id });
     if (error && error.code !== '23505') {
       console.error('[ChatDos] eliminar para mí', error);
@@ -962,6 +1126,7 @@ export const ChatPage: React.FC = () => {
     setConfirmDeleteAll(null);
     forgetUrl(msg.id);
     if (msg.media_path) {
+      olvidarArchivoGuardado(msg.media_path);
       const { error: stErr } = await supabase.storage.from('media').remove([msg.media_path]);
       if (stErr) console.error('[ChatDos] borrar archivo', stErr);
     }
@@ -1020,6 +1185,8 @@ export const ChatPage: React.FC = () => {
     replyId: string | null
   ) => {
     if (!user || !chatId || !chatKey) return;
+    if (subiendoRef.current.has(messageId)) return; // ya se está subiendo
+    subiendoRef.current.add(messageId);
     const path = mediaPath(chatId, user.id, messageId);
     const saved = retryRef.current.get(messageId) || { media, payload, viewOnce, replyId };
     retryRef.current.set(messageId, saved);
@@ -1051,6 +1218,7 @@ export const ChatPage: React.FC = () => {
         { onConflict: 'id', ignoreDuplicates: true }
       );
       if (error) throw error;
+      quitarDeBandeja(messageId);
       notifyPartner(messageId);
       retryRef.current.delete(messageId);
       setUploads((u) => {
@@ -1064,6 +1232,8 @@ export const ChatPage: React.FC = () => {
     } catch (err) {
       console.error('[ChatDos] enviar archivo', err);
       setUploads((u) => ({ ...u, [messageId]: { pct: 0, failed: true } }));
+    } finally {
+      subiendoRef.current.delete(messageId);
     }
   };
 
@@ -1117,7 +1287,13 @@ export const ChatPage: React.FC = () => {
     setReplyTo(null);
     setPendingMedia(null);
     scrollToBottom();
-    uploadAndSave(messageId, media, payload, viewOnce, replying ? replying.id : null);
+    const { blob, ...info } = media;
+    ponerEnBandeja({
+      id: messageId,
+      chatId,
+      creado: sentAt,
+      media: { blob, info, payload, viewOnce, replyId: replying ? replying.id : null },
+    }).finally(() => uploadAndSave(messageId, media, payload, viewOnce, replying ? replying.id : null));
   };
 
   const retryUpload = (messageId: string) => {
@@ -1203,6 +1379,7 @@ export const ChatPage: React.FC = () => {
     }
     const toRemove = (path as string | null) || msg.media_path;
     if (toRemove) {
+      olvidarArchivoGuardado(toRemove);
       const { error: rmErr } = await supabase.storage.from('media').remove([toRemove]);
       if (rmErr) console.error('[ChatDos] borrar ver una vez', rmErr);
     }

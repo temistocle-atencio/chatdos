@@ -3,6 +3,24 @@ import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { safeMarkDelivered, safeTouchLastSeen } from '../lib/rpc';
 import type { Profile } from '../types/database';
+import { borrarSesionLocal, borrarTodoLocal, guardarSesionLocal, leerSesionLocal } from '../lib/offline';
+
+// Sin internet: recuperar el usuario guardado por Supabase en el celular
+function usuarioGuardado(): User | null {
+  try {
+    const k = Object.keys(localStorage).find((x) => x.startsWith('sb-') && x.endsWith('-auth-token'));
+    if (!k) return null;
+    const v = JSON.parse(localStorage.getItem(k) || 'null');
+    return (v?.user as User) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const delCache = (userId: string) => {
+  const s = leerSesionLocal();
+  return s && s.userId === userId ? s : null;
+};
 
 interface AuthContextType {
   user: User | null;
@@ -36,44 +54,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) {
         console.warn('[Auth] Error al cargar perfil:', error.message);
-        return null;
+        return delCache(userId)?.profile ?? null;
       }
+      guardarSesionLocal({ userId, profile: data as Profile });
       return data as Profile;
     } catch (err) {
       console.warn('[Auth] Error de conexión al cargar perfil:', err);
-      return null;
+      return delCache(userId)?.profile ?? null;
     }
   };
 
   // Verifica si el usuario actual es administrador mediante la RPC 'is_admin'
-  const checkIsAdmin = async (): Promise<boolean> => {
+  const checkIsAdmin = async (userId?: string): Promise<boolean> => {
+    const guardado = userId ? !!delCache(userId)?.isAdmin : false;
     try {
       const { data, error } = await supabase.rpc('is_admin');
       if (error) {
         console.warn('[Auth] Error al verificar rol administrador:', error.message);
-        return false;
+        return guardado;
       }
+      if (userId) guardarSesionLocal({ userId, isAdmin: !!data });
       return !!data;
     } catch (err) {
       console.warn('[Auth] Excepción al verificar rol administrador:', err);
-      return false;
+      return guardado;
     }
   };
 
   // Para invitados: obtiene el ID de su único chat
   const getMySingleChatId = async (): Promise<string | null> => {
+    const guardado = leerSesionLocal()?.chatId ?? null;
     try {
       const { data, error } = await supabase
         .from('chat_members')
         .select('chat_id')
         .limit(1);
 
-      if (error || !data || data.length === 0) {
-        return null;
-      }
+      if (error) return guardado;
+      if (!data || data.length === 0) return null;
+      const u = leerSesionLocal();
+      if (u) guardarSesionLocal({ userId: u.userId, chatId: data[0].chat_id });
       return data[0].chat_id;
     } catch {
-      return null;
+      return guardado;
     }
   };
 
@@ -84,14 +107,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const initAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
+        // Sin internet la sesión puede no renovarse: se usa el usuario guardado en el celular
+        const usuario = session?.user ?? usuarioGuardado();
         if (mounted) {
           setSession(session);
-          setUser(session?.user ?? null);
+          setUser(usuario);
 
-          if (session?.user) {
+          if (usuario) {
             const [userProfile, adminFlag] = await Promise.all([
-              loadProfile(session.user.id),
-              checkIsAdmin(),
+              loadProfile(usuario.id),
+              checkIsAdmin(usuario.id),
             ]);
             if (mounted) {
               setProfile(userProfile);
@@ -113,13 +138,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Escucha cambios de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, currentSession) => {
+        // Sin internet, un fallo al renovar la sesión no debe sacar a la persona de la app
+        if (!currentSession && event !== 'SIGNED_OUT' && usuarioGuardado()) return;
         setSession(currentSession);
         setUser(currentSession?.user ?? null);
 
         if (currentSession?.user) {
           const [userProfile, adminFlag] = await Promise.all([
             loadProfile(currentSession.user.id),
-            checkIsAdmin(),
+            checkIsAdmin(currentSession.user.id),
           ]);
           setProfile(userProfile);
           setIsAdmin(adminFlag);
@@ -207,9 +234,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(data.user);
     setSession(data.session);
 
+    guardarSesionLocal({ userId: data.user.id });
     const [userProfile, adminFlag] = await Promise.all([
       loadProfile(data.user.id),
-      checkIsAdmin(),
+      checkIsAdmin(data.user.id),
     ]);
 
     setProfile(userProfile);
@@ -227,6 +255,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await supabase.auth.signOut();
     } finally {
+      borrarSesionLocal();
+      await borrarTodoLocal();
       setUser(null);
       setSession(null);
       setProfile(null);

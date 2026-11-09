@@ -4,6 +4,7 @@ import { UserPlus, MessageSquare, Settings2, RefreshCw, BellOff } from 'lucide-r
 import { supabase } from '../lib/supabase';
 import { playIncoming, updateBadge } from '../lib/push';
 import { leerSilencios } from '../lib/mute';
+import { guardarDato, leerDato } from '../lib/offline';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { getLocalPrivateKey, getChatKey, decryptJSON } from '../lib/crypto';
@@ -29,8 +30,15 @@ export const ChatsPage: React.FC = () => {
 
   const fetchChats = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
     setErrorMsg(null);
+    // Mostrar al instante la última lista guardada en el celular (sirve sin internet)
+    const guardada = await leerDato<ChatItemWithPreview[]>(`lista-chats-${user.id}`);
+    if (guardada?.length) {
+      setChats((actual) => (actual.length ? actual : guardada));
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     try {
       // 1. Obtener mis membresías de chat
@@ -165,9 +173,12 @@ export const ChatsPage: React.FC = () => {
       });
 
       setChats(chatItems);
+      guardarDato(`lista-chats-${user.id}`, chatItems);
     } catch (err: unknown) {
       console.error('[ChatsPage] Error al cargar lista de chats:', err);
-      if (err instanceof Error) {
+      if (guardada?.length) {
+        // Sin internet: se queda la lista guardada
+      } else if (err instanceof Error) {
         setErrorMsg(err.message);
       } else {
         setErrorMsg('No se pudieron cargar los chats.');
