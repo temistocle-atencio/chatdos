@@ -113,7 +113,9 @@ export const ChatsPage: React.FC = () => {
                   lastMsg.iv
                 );
                 const kindName = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' }[lastMsg.kind];
-                lastMessageText = payload.text || kindName || '';
+                lastMessageText = lastMsg.view_once
+                  ? `${kindName} · ver una vez`
+                  : payload.text || (payload.media?.music ? 'Música' : kindName) || '';
               } catch {
                 lastMessageText = 'Mensaje cifrado';
               }

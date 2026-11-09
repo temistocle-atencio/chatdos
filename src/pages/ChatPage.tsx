@@ -17,6 +17,11 @@ import {
   MessageSquare,
   Reply,
   Pencil,
+  Paperclip,
+  Mic,
+  Trash2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -24,6 +29,23 @@ import { AvatarImage } from '../components/AvatarImage';
 import { MessageItem } from '../components/MessageItem';
 import { EmojiPickerPopover } from '../components/EmojiPickerPopover';
 import { MessageActionsSheet } from '../components/MessageActionsSheet';
+import { MessageMedia, MediaViewer, type UploadState } from '../components/MessageMedia';
+import { AttachSheet, MediaComposer, type PendingMedia } from '../components/MediaComposer';
+import {
+  MAX_FILE_BYTES,
+  MAX_VIDEO_SECONDS,
+  MAX_AUDIO_SECONDS,
+  compressImage,
+  inspectVideo,
+  audioDuration,
+  VoiceRecorder,
+  mediaPath,
+  uploadEncrypted,
+  cacheLocalUrl,
+  forgetUrl,
+  downloadDecrypted,
+  formatDuration,
+} from '../lib/media';
 import {
   getLocalPrivateKey,
   getChatKey,
@@ -107,6 +129,26 @@ export const ChatPage: React.FC = () => {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const messageIdsRef = useRef<Set<string>>(new Set());
+
+  // ETAPA 6: fotos, videos y audios
+  const [uploads, setUploads] = useState<Record<string, UploadState>>({});
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [viewer, setViewer] = useState<{
+    url?: string;
+    kind: 'image' | 'video' | 'audio';
+    viewOnceMsg?: DecryptedMessage;
+    loading?: boolean;
+  } | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [recordViewOnce, setRecordViewOnce] = useState(false);
+  const recorderRef = useRef<VoiceRecorder | null>(null);
+  const retryRef = useRef<Map<string, { media: PendingMedia; payload: MessagePayload; viewOnce: boolean; replyId: string | null; fileKey?: string }>>(new Map());
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<DecryptedMessage[]>([]);
 
   // Referencia al canal activo de realtime para enviar broadcast 'typing'
@@ -886,6 +928,7 @@ export const ChatPage: React.FC = () => {
   // Eliminar para todos: primero el archivo (si tiene) y luego el contenido
   const deleteForAll = async (msg: DecryptedMessage) => {
     setConfirmDeleteAll(null);
+    forgetUrl(msg.id);
     if (msg.media_path) {
       const { error: stErr } = await supabase.storage.from('media').remove([msg.media_path]);
       if (stErr) console.error('[ChatDos] borrar archivo', stErr);
@@ -904,6 +947,233 @@ export const ChatPage: React.FC = () => {
       )
     );
     if (replyTo?.id === msg.id) setReplyTo(null);
+  };
+
+  // ===================== ETAPA 6: archivos =====================
+
+  // Revisar y preparar el archivo elegido (comprimir fotos, revisar tamaño y duración)
+  const handleFilePicked = async (file: File | undefined, forceAudio = false) => {
+    setAttachOpen(false);
+    if (!file) return;
+    setPreparing(true);
+    try {
+      if (!forceAudio && file.type.startsWith('image/')) {
+        const img = await compressImage(file);
+        setPendingMedia({ kind: 'image', blob: img.blob, mime: img.mime, width: img.width, height: img.height, thumb: img.thumb });
+      } else if (!forceAudio && file.type.startsWith('video/')) {
+        if (file.size > MAX_FILE_BYTES) throw new Error('El video pesa más de 25 MB. Recórtalo o grábalo más corto.');
+        const info = await inspectVideo(file);
+        if (info.duration > MAX_VIDEO_SECONDS + 0.5) throw new Error('El video dura más de 2 minutos. Recórtalo antes de enviarlo.');
+        setPendingMedia({ kind: 'video', blob: file, mime: file.type || 'video/mp4', ...info });
+      } else if (file.type.startsWith('audio/') || forceAudio) {
+        if (file.size > MAX_FILE_BYTES) throw new Error('El audio pesa más de 25 MB.');
+        const duration = await audioDuration(file);
+        setPendingMedia({ kind: 'audio', blob: file, mime: file.type || 'audio/mpeg', duration, name: file.name, music: true });
+      } else {
+        throw new Error('Ese tipo de archivo no se puede enviar.');
+      }
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'No se pudo preparar el archivo');
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  // Subir (cifrado) y guardar el mensaje. Sirve también para reintentar.
+  const uploadAndSave = async (
+    messageId: string,
+    media: PendingMedia,
+    payload: MessagePayload,
+    viewOnce: boolean,
+    replyId: string | null
+  ) => {
+    if (!user || !chatId || !chatKey) return;
+    const path = mediaPath(chatId, user.id, messageId);
+    const saved = retryRef.current.get(messageId) || { media, payload, viewOnce, replyId };
+    retryRef.current.set(messageId, saved);
+    setUploads((u) => ({ ...u, [messageId]: { pct: saved.fileKey ? 100 : 0 } }));
+    try {
+      if (!saved.fileKey) {
+        const { fileKey } = await uploadEncrypted(path, media.blob, (pct) =>
+          setUploads((u) => ({ ...u, [messageId]: { pct: Math.min(pct, 99) } }))
+        );
+        saved.fileKey = fileKey; // si falla al guardar, el reintento no vuelve a subir
+      }
+      const finalPayload: MessagePayload = {
+        ...payload,
+        media: { ...(payload.media as NonNullable<MessagePayload['media']>), key: saved.fileKey as string },
+      };
+      const encrypted = await encryptJSON(chatKey, finalPayload);
+      const { error } = await supabase.from('messages').upsert(
+        {
+          id: messageId,
+          chat_id: chatId,
+          sender_id: user.id,
+          kind: media.kind,
+          ciphertext: encrypted.ciphertext,
+          iv: encrypted.iv,
+          media_path: path,
+          view_once: viewOnce,
+          reply_to: replyId,
+        },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+      if (error) throw error;
+      retryRef.current.delete(messageId);
+      setUploads((u) => {
+        const n = { ...u };
+        delete n[messageId];
+        return n;
+      });
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, isPending: false, payload: finalPayload } : m))
+      );
+    } catch (err) {
+      console.error('[ChatDos] enviar archivo', err);
+      setUploads((u) => ({ ...u, [messageId]: { pct: 0, failed: true } }));
+    }
+  };
+
+  const sendMedia = (media: PendingMedia, caption: string, viewOnce: boolean) => {
+    if (!user || !chatId || !chatKey) return;
+    const messageId = crypto.randomUUID();
+    const sentAt = Date.now();
+    const replying = replyTo;
+    const payload: MessagePayload = {
+      v: 1,
+      sentAt,
+      ...(caption && !viewOnce ? { text: caption } : {}),
+      ...(replying
+        ? { replyPreview: { senderId: replying.sender_id, text: shortText(replying), kind: replying.kind } }
+        : {}),
+      media: {
+        key: '',
+        mime: media.mime,
+        size: media.blob.size,
+        width: media.width,
+        height: media.height,
+        duration: media.duration,
+        // En "ver una vez" no va miniatura (se vería la foto sin abrirla)
+        thumb: viewOnce ? undefined : media.thumb,
+        name: media.name,
+        music: media.music,
+      },
+    };
+    // Quien envía ve su propio archivo sin bajarlo (excepto "ver una vez")
+    if (!viewOnce) cacheLocalUrl(messageId, media.blob);
+    const optimistic: DecryptedMessage = {
+      id: messageId,
+      chat_id: chatId,
+      sender_id: user.id,
+      kind: media.kind,
+      ciphertext: '',
+      iv: '',
+      media_path: mediaPath(chatId, user.id, messageId),
+      reply_to: replying ? replying.id : null,
+      view_once: viewOnce,
+      created_at: new Date(sentAt).toISOString(),
+      edited_at: null,
+      deleted_for_all: false,
+      delivered_at: null,
+      read_at: null,
+      viewed_at: null,
+      payload,
+      isPending: true,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setReplyTo(null);
+    setPendingMedia(null);
+    scrollToBottom();
+    uploadAndSave(messageId, media, payload, viewOnce, replying ? replying.id : null);
+  };
+
+  const retryUpload = (messageId: string) => {
+    const saved = retryRef.current.get(messageId);
+    if (saved) uploadAndSave(messageId, saved.media, saved.payload, saved.viewOnce, saved.replyId);
+  };
+
+  // ----- Notas de voz -----
+  const startRecording = async () => {
+    if (recording) return;
+    const rec = new VoiceRecorder();
+    try {
+      await rec.start();
+    } catch (err) {
+      console.error('[ChatDos] micrófono', err);
+      setToast('No se pudo usar el micrófono. Revisa el permiso en los ajustes del navegador.');
+      return;
+    }
+    recorderRef.current = rec;
+    setRecordViewOnce(false);
+    setRecordSeconds(0);
+    setRecording(true);
+  };
+
+  const cancelRecording = () => {
+    recorderRef.current?.cancel();
+    recorderRef.current = null;
+    setRecording(false);
+  };
+
+  const finishRecording = async () => {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    recorderRef.current = null;
+    setRecording(false);
+    const { blob, mime, duration } = await rec.stop();
+    if (duration < 1 || blob.size < 1000) {
+      setToast('El audio es muy corto');
+      return;
+    }
+    sendMedia({ kind: 'audio', blob, mime, duration, music: false }, '', recordViewOnce);
+  };
+
+  // Reloj de la grabación y corte automático a los 5 minutos
+  useEffect(() => {
+    if (!recording) return;
+    const t = setInterval(() => {
+      const s = recorderRef.current?.elapsed() || 0;
+      setRecordSeconds(s);
+      if (s >= MAX_AUDIO_SECONDS) finishRecording();
+    }, 250);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording]);
+
+  // Si se sale del chat grabando, se apaga el micrófono
+  useEffect(() => () => recorderRef.current?.cancel(), []);
+
+  // ----- Ver una vez -----
+  const openViewOnce = async (msg: DecryptedMessage) => {
+    const media = msg.payload?.media;
+    if (!media?.key || !msg.media_path) return;
+    setViewer({ kind: msg.kind as 'image' | 'video' | 'audio', viewOnceMsg: msg, loading: true });
+    try {
+      const url = await downloadDecrypted(msg.id, msg.media_path, media.key, media.mime, false);
+      setViewer({ url, kind: msg.kind as 'image' | 'video' | 'audio', viewOnceMsg: msg });
+    } catch {
+      setViewer(null);
+      setToast('Este archivo ya no está disponible');
+    }
+  };
+
+  const closeViewer = async () => {
+    const v = viewer;
+    setViewer(null);
+    if (!v?.viewOnceMsg) return;
+    if (v.url) URL.revokeObjectURL(v.url);
+    const msg = v.viewOnceMsg;
+    // Marcar como visto y borrar el archivo para siempre
+    const { data: path, error } = await supabase.rpc('mark_viewed_once', { p_message: msg.id });
+    if (error) {
+      console.error('[ChatDos] mark_viewed_once', error);
+    }
+    const toRemove = (path as string | null) || msg.media_path;
+    if (toRemove) {
+      const { error: rmErr } = await supabase.storage.from('media').remove([toRemove]);
+      if (rmErr) console.error('[ChatDos] borrar ver una vez', rmErr);
+    }
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, viewed_at: new Date().toISOString() } : m)));
   };
 
   // Ir al mensaje original de una cita
@@ -1216,6 +1486,18 @@ export const ChatPage: React.FC = () => {
                     isFirstInGroup={isFirstInGroup}
                     onOpenActions={setActionMsg}
                     onSwipeReply={startReply}
+                    media={
+                      msg.kind !== 'text' && !msg.deleted_for_all && !msg.decryptionError ? (
+                        <MessageMedia
+                          message={msg}
+                          isMine={isMine}
+                          upload={uploads[msg.id]}
+                          onRetry={retryUpload}
+                          onOpenMedia={(url, kind) => setViewer({ url, kind })}
+                          onOpenViewOnce={openViewOnce}
+                        />
+                      ) : undefined
+                    }
                     onQuoteClick={goToMessage}
                     onReactionClick={toggleReaction}
                   />
@@ -1278,61 +1560,172 @@ export const ChatPage: React.FC = () => {
           </div>
         )}
         <div className="flex items-end gap-2 bg-white dark:bg-[#253240] p-1.5 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
-          {/* Botón de emojis */}
-          <button
-            type="button"
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-            className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white rounded-[5px] transition-colors shrink-0"
-            title="Insertar emoji"
-            aria-label="Selector de emojis"
-          >
-            <Smile className="w-5 h-5" strokeWidth={2} />
-          </button>
+          {recording ? (
+            <>
+              {/* Grabando nota de voz */}
+              <button
+                type="button"
+                onClick={cancelRecording}
+                className="w-11 h-11 shrink-0 flex items-center justify-center text-[#B03030] dark:text-[#FDEBD3] rounded-[5px]"
+                title="Descartar audio"
+                aria-label="Descartar audio"
+              >
+                <Trash2 className="w-5 h-5" strokeWidth={2} />
+              </button>
+              <div className="flex-1 flex items-center gap-2 px-1 min-h-11 text-sm font-['Inter'] text-[#1F2933] dark:text-white">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
+                <span className="tabular-nums">{formatDuration(recordSeconds)}</span>
+                <span className="text-xs text-[#5B6670] dark:text-[#E3E7EC] truncate">Grabando · máx. 5 min</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRecordViewOnce((v) => !v)}
+                className={`w-11 h-11 shrink-0 flex flex-col items-center justify-center rounded-[5px] border ${
+                  recordViewOnce
+                    ? 'border-[#005198] text-[#005198] dark:border-white dark:text-white'
+                    : 'border-transparent text-[#5B6670] dark:text-[#E3E7EC]'
+                }`}
+                aria-pressed={recordViewOnce}
+                title="Escuchar una sola vez"
+              >
+                {recordViewOnce ? <Eye className="w-4 h-4" strokeWidth={2} /> : <EyeOff className="w-4 h-4" strokeWidth={2} />}
+                <span className="text-[9px] font-['Inter'] font-semibold leading-none mt-0.5">1 vez</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Botón de emojis */}
+              <button
+                type="button"
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white rounded-[5px] transition-colors shrink-0"
+                title="Insertar emoji"
+                aria-label="Selector de emojis"
+              >
+                <Smile className="w-5 h-5" strokeWidth={2} />
+              </button>
 
-          {/* Campo de texto que crece hasta 5 líneas */}
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            value={inputText}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            onFocus={() => {
-              if (isNearBottom()) setTimeout(scrollToBottom, 300);
-            }}
-            placeholder={
-              hasPartnerKey
-                ? 'Escribe un mensaje...'
-                : 'Esperando a que la otra persona active su llave...'
-            }
-            disabled={!hasPartnerKey}
-            className="flex-1 max-h-28 py-1.5 px-2 bg-transparent text-sm font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#E3E7EC] resize-none focus:outline-none"
-          />
+              {/* Campo de texto que crece hasta 5 líneas */}
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={inputText}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onFocus={() => {
+                  if (isNearBottom()) setTimeout(scrollToBottom, 300);
+                }}
+                placeholder={
+                  hasPartnerKey
+                    ? 'Escribe un mensaje...'
+                    : 'Esperando a que la otra persona active su llave...'
+                }
+                disabled={!hasPartnerKey}
+                className="flex-1 max-h-28 py-1.5 px-2 bg-transparent text-[16px] md:text-sm font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#E3E7EC] resize-none focus:outline-none"
+              />
 
-          {/* 5. Botón enviar:
-              Sin texto: gris claro #E3E7EC con ícono #5B6670
-              Con texto: naranja #F28C1B con ícono #1F2933
-          */}
-          <button
-            type="button"
-            onClick={handleSendMessage}
-            disabled={!hasInputText || !hasPartnerKey}
-            className={`w-11 h-11 rounded-[5px] flex items-center justify-center shrink-0 transition-all ${
-              hasInputText && hasPartnerKey
-                ? 'bg-[#F28C1B] text-[#1F2933] shadow-[0_2px_8px_rgba(0,0,0,0.12)] hover:brightness-105 active:scale-95 cursor-pointer'
-                : 'bg-[#E3E7EC] dark:bg-[#1F2933] text-[#5B6670] dark:text-[#5B6670] cursor-not-allowed'
-            }`}
-            title={editingMsg ? 'Guardar cambios' : 'Enviar mensaje'}
-            aria-label={editingMsg ? 'Guardar cambios' : 'Enviar mensaje'}
-          >
-            <Send
-              className={`w-5 h-5 ${
-                hasInputText && hasPartnerKey ? 'text-[#1F2933]' : 'text-[#5B6670]'
-              }`}
-              strokeWidth={2}
-            />
-          </button>
+              {/* Adjuntar foto, video o audio */}
+              {!editingMsg && (
+                <button
+                  type="button"
+                  onClick={() => setAttachOpen(true)}
+                  disabled={!hasPartnerKey || preparing}
+                  className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white rounded-[5px] transition-colors shrink-0 disabled:opacity-50"
+                  title="Adjuntar"
+                  aria-label="Adjuntar foto, video o audio"
+                >
+                  {preparing ? <RefreshCw className="w-5 h-5 animate-spin" strokeWidth={2} /> : <Paperclip className="w-5 h-5" strokeWidth={2} />}
+                </button>
+              )}
+            </>
+          )}
+
+          {/* Botón principal (el único naranja):
+              con texto = enviar; sin texto = grabar nota de voz; grabando = enviar el audio */}
+          {(() => {
+            const canUse = hasPartnerKey;
+            const mode = recording ? 'sendAudio' : hasInputText || editingMsg ? 'send' : 'mic';
+            const label =
+              mode === 'sendAudio' ? 'Enviar audio' : mode === 'mic' ? 'Grabar nota de voz' : editingMsg ? 'Guardar cambios' : 'Enviar mensaje';
+            return (
+              <button
+                type="button"
+                onClick={mode === 'sendAudio' ? finishRecording : mode === 'mic' ? startRecording : handleSendMessage}
+                disabled={!canUse || (mode === 'send' && !hasInputText)}
+                className={`w-11 h-11 rounded-[5px] flex items-center justify-center shrink-0 transition-all ${
+                  canUse && (mode !== 'send' || hasInputText)
+                    ? 'bg-[#F28C1B] text-[#1F2933] shadow-[0_2px_8px_rgba(0,0,0,0.12)] hover:brightness-105 active:scale-95 cursor-pointer'
+                    : 'bg-[#E3E7EC] dark:bg-[#1F2933] text-[#5B6670] cursor-not-allowed'
+                }`}
+                title={label}
+                aria-label={label}
+              >
+                {mode === 'mic' ? <Mic className="w-5 h-5" strokeWidth={2} /> : <Send className="w-5 h-5" strokeWidth={2} />}
+              </button>
+            );
+          })()}
         </div>
+
+        {/* Selectores de archivos (escondidos) */}
+        <input
+          ref={galleryInputRef}
+          type="file"
+          accept="image/*,video/*"
+          className="hidden"
+          onChange={(e) => {
+            handleFilePicked(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*,video/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            handleFilePicked(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+        <input
+          ref={audioInputRef}
+          type="file"
+          accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg"
+          className="hidden"
+          onChange={(e) => {
+            handleFilePicked(e.target.files?.[0], true);
+            e.target.value = '';
+          }}
+        />
       </div>
+
+      {attachOpen && (
+        <AttachSheet
+          onClose={() => setAttachOpen(false)}
+          onGallery={() => galleryInputRef.current?.click()}
+          onCamera={() => cameraInputRef.current?.click()}
+          onAudioFile={() => audioInputRef.current?.click()}
+        />
+      )}
+
+      {pendingMedia && (
+        <MediaComposer
+          media={pendingMedia}
+          onCancel={() => setPendingMedia(null)}
+          onSend={({ caption, viewOnce }) => sendMedia(pendingMedia, caption, viewOnce)}
+        />
+      )}
+
+      {viewer && (
+        <MediaViewer
+          url={viewer.url}
+          kind={viewer.kind}
+          viewOnce={!!viewer.viewOnceMsg}
+          loading={viewer.loading}
+          onClose={closeViewer}
+        />
+      )}
 
       {/* Menú de acciones de un mensaje */}
       {actionMsg && (
