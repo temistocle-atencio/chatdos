@@ -1,0 +1,6 @@
+{
+  "name": "ChatDos",
+  "description": "PWA de mensajería privada para 2 personas con cifrado de extremo a extremo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

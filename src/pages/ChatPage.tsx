@@ -1,0 +1,1031 @@
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  ChevronLeft,
+  Send,
+  Smile,
+  RefreshCw,
+  ShieldCheck,
+  ShieldAlert,
+  Clock,
+  KeyRound,
+  X,
+  MoreVertical,
+  User,
+  Settings,
+  LogOut,
+  MessageSquare,
+} from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
+import { AvatarImage } from '../components/AvatarImage';
+import { MessageItem } from '../components/MessageItem';
+import { EmojiPickerPopover } from '../components/EmojiPickerPopover';
+import {
+  getLocalPrivateKey,
+  getChatKey,
+  encryptJSON,
+  decryptJSON,
+  computeSecurityNumber,
+  checkPartnerKeyChange,
+} from '../lib/crypto';
+import {
+  formatLastSeen,
+  formatMessageDateSeparator,
+} from '../lib/formatters';
+import {
+  safeMarkDelivered,
+  safeMarkRead,
+  safeTouchLastSeen,
+} from '../lib/rpc';
+import type { Profile } from '../types/database';
+import type { DbMessage, DecryptedMessage, MessagePayload } from '../types/chat';
+
+export const ChatPage: React.FC = () => {
+  const { chatId } = useParams<{ chatId: string }>();
+  const { user, profile: myProfile, isAdmin, signOut } = useAuth();
+  const navigate = useNavigate();
+
+  // Información del compañero de chat
+  const [partner, setPartner] = useState<Profile | null>(null);
+  const [loadingPartner, setLoadingPartner] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Llave criptográfica del chat
+  const [chatKey, setChatKey] = useState<CryptoKey | null>(null);
+
+  // Mensajes y paginación
+  const [messages, setMessages] = useState<DecryptedMessage[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [hasMoreOlder, setHasMoreOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
+  // Presencia y estado en tiempo real
+  const [isPartnerOnline, setIsPartnerOnline] = useState(false);
+  const [isPartnerTyping, setIsPartnerTyping] = useState(false);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTypingBroadcastTime = useRef<number>(0);
+
+  // Menú de tres puntos de la cabecera
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const headerMenuRef = useRef<HTMLDivElement>(null);
+
+  // Entrada de texto y emojis
+  const [inputText, setInputText] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Seguridad
+  const [keyChangedAlert, setKeyChangedAlert] = useState(false);
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [securityNumber, setSecurityNumber] = useState<string | null>(null);
+  const [calculatingSecurity, setCalculatingSecurity] = useState(false);
+
+  // Referencia al canal activo de realtime para enviar broadcast 'typing'
+  const activeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // Cerrar menú de cabecera al hacer clic fuera
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
+        setHeaderMenuOpen(false);
+      }
+    };
+    if (headerMenuOpen) {
+      document.addEventListener('mousedown', handleOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+    };
+  }, [headerMenuOpen]);
+
+  // 1. Cargar compañero de chat y derivar la llave de chat
+  useEffect(() => {
+    if (!chatId || !user) return;
+
+    let isMounted = true;
+
+    const initChat = async () => {
+      setLoadingPartner(true);
+      setErrorMsg(null);
+      try {
+        // Buscar el otro participante
+        const { data: memberData, error: memError } = await supabase
+          .from('chat_members')
+          .select('user_id')
+          .eq('chat_id', chatId)
+          .neq('user_id', user.id)
+          .single();
+
+        if (memError || !memberData?.user_id) {
+          throw new Error('No se encontró a la otra persona en esta conversación.');
+        }
+
+        // Consultar el perfil del compañero
+        const { data: profData, error: profError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', memberData.user_id)
+          .single();
+
+        if (profError || !profData) {
+          throw new Error('No se pudo cargar el perfil de tu pareja de chat.');
+        }
+
+        const partnerProf = profData as Profile;
+        if (!isMounted) return;
+        setPartner(partnerProf);
+
+        // Verificar si la llave pública de la otra persona cambió
+        if (partnerProf.public_key) {
+          const hasChanged = await checkPartnerKeyChange(
+            partnerProf.id,
+            partnerProf.public_key as JsonWebKey
+          );
+          if (isMounted) setKeyChangedAlert(hasChanged);
+
+          // Derivar la llave simétrica del chat
+          const myPrivateKey = await getLocalPrivateKey(user.id);
+          if (myPrivateKey) {
+            const derived = await getChatKey(
+              chatId,
+              myPrivateKey,
+              partnerProf.public_key as JsonWebKey
+            );
+            if (isMounted) setChatKey(derived);
+          }
+        }
+      } catch (err: unknown) {
+        console.error('[ChatDos] Error al iniciar chat:', err);
+        if (isMounted) {
+          setErrorMsg(err instanceof Error ? err.message : 'Error al conectar con el chat.');
+        }
+      } finally {
+        if (isMounted) setLoadingPartner(false);
+      }
+    };
+
+    initChat();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [chatId, user]);
+
+  // Función para descifrar un mensaje seguro
+  const decryptSingleMessage = useCallback(
+    async (msg: DbMessage, key: CryptoKey | null): Promise<DecryptedMessage> => {
+      if (!key) {
+        return { ...msg, decryptionError: true };
+      }
+      try {
+        const payload = await decryptJSON<MessagePayload>(key, msg.ciphertext, msg.iv);
+        return { ...msg, payload };
+      } catch (err) {
+        console.warn('[ChatDos] No se pudo descifrar el mensaje:', msg.id, err);
+        return { ...msg, decryptionError: true };
+      }
+    },
+    []
+  );
+
+  // 2. Cargar los últimos 50 mensajes y marcar como leídos al abrir el chat
+  useEffect(() => {
+    if (!chatId || !chatKey) return;
+
+    let isMounted = true;
+
+    const loadInitialMessages = async () => {
+      setLoadingMessages(true);
+      try {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*')
+          .eq('chat_id', chatId)
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        if (error) {
+          console.error('[ChatDos] loadInitialMessages', error);
+          throw error;
+        }
+
+        const rawList = (data || []) as DbMessage[];
+        if (rawList.length === 50) {
+          if (isMounted) setHasMoreOlder(true);
+        }
+
+        const decryptedList = await Promise.all(
+          rawList.map((m) => decryptSingleMessage(m, chatKey))
+        );
+        decryptedList.reverse();
+
+        if (isMounted) {
+          setMessages(decryptedList);
+          // Al abrir el chat se marca como leído
+          safeMarkRead(chatId);
+        }
+      } catch (err) {
+        console.error('[ChatDos] Error al cargar mensajes iniciales:', err);
+      } finally {
+        if (isMounted) {
+          setLoadingMessages(false);
+          scrollToBottom();
+        }
+      }
+    };
+
+    loadInitialMessages();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [chatId, chatKey, decryptSingleMessage]);
+
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 80);
+  };
+
+  // 3. Paginación hacia arriba (50 mensajes más antiguos)
+  const loadOlderMessages = async () => {
+    if (!chatId || !chatKey || loadingOlder || messages.length === 0) return;
+
+    const oldestMessage = messages[0];
+    if (!oldestMessage.created_at) return;
+
+    setLoadingOlder(true);
+    const prevScrollHeight = scrollContainerRef.current?.scrollHeight || 0;
+
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('chat_id', chatId)
+        .lt('created_at', oldestMessage.created_at)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) {
+        console.error('[ChatDos] loadOlderMessages', error);
+        throw error;
+      }
+
+      const rawList = (data || []) as DbMessage[];
+      if (rawList.length < 50) {
+        setHasMoreOlder(false);
+      }
+
+      const decryptedOlder = await Promise.all(
+        rawList.map((m) => decryptSingleMessage(m, chatKey))
+      );
+      decryptedOlder.reverse();
+
+      setMessages((prev) => [...decryptedOlder, ...prev]);
+
+      setTimeout(() => {
+        if (scrollContainerRef.current) {
+          const newScrollHeight = scrollContainerRef.current.scrollHeight;
+          scrollContainerRef.current.scrollTop = newScrollHeight - prevScrollHeight;
+        }
+      }, 50);
+    } catch (err) {
+      console.error('[ChatDos] Error al cargar mensajes anteriores:', err);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  // 4. Conexión en tiempo real: suscripción a canal privado chat:<chatId>
+  useEffect(() => {
+    if (!chatId || !user) return;
+
+    let isMounted = true;
+
+    const connectRealtime = async () => {
+      // Orden exacto requerido por el contrato:
+      // 1. Obtener access_token de la sesión
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.access_token) {
+        await supabase.realtime.setAuth(data.session.access_token);
+      }
+
+      // 2. Crear canal privado con broadcast y presence (key = user.id)
+      const channel = supabase.channel(`chat:${chatId}`, {
+        config: {
+          private: true,
+          broadcast: { self: false },
+          presence: { key: user.id },
+        },
+      });
+
+      activeChannelRef.current = channel;
+
+      // Escuchar eventos de Presence
+      channel
+        .on('presence', { event: 'sync' }, () => {
+          if (!isMounted) return;
+          const state = channel.presenceState();
+          console.log('[ChatDos] presenceState sync', state);
+
+          // Verificar si el compañero está presente
+          const partnerOnline = partner?.id
+            ? !!state[partner.id]
+            : Object.keys(state).some((k) => k !== user.id);
+          setIsPartnerOnline(partnerOnline);
+        })
+        .on('presence', { event: 'join' }, ({ key }) => {
+          console.log('[ChatDos] presence join', key);
+          if (!isMounted) return;
+          if (key !== user.id) {
+            setIsPartnerOnline(true);
+          }
+        })
+        .on('presence', { event: 'leave' }, ({ key }) => {
+          console.log('[ChatDos] presence leave', key);
+          if (!isMounted) return;
+          if (key !== user.id) {
+            setIsPartnerOnline(false);
+          }
+        });
+
+      // Escuchar broadcast 'typing'
+      channel.on('broadcast', { event: 'typing' }, (eventPayload) => {
+        if (!isMounted) return;
+        if (eventPayload?.payload?.userId !== user.id) {
+          setIsPartnerTyping(true);
+          if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+          typingTimeoutRef.current = setTimeout(() => {
+            if (isMounted) setIsPartnerTyping(false);
+          }, 4000);
+        }
+      });
+
+      // Escuchar postgres_changes: INSERT
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `chat_id=eq.${chatId}`,
+        },
+        async (payload) => {
+          if (!isMounted) return;
+          const newDbMsg = payload.new as DbMessage;
+          console.log('[ChatDos] Nuevo INSERT en messages:', newDbMsg.id);
+
+          // Si es de la otra persona: marcar como entregado y como leído
+          if (newDbMsg.sender_id !== user.id) {
+            safeMarkDelivered();
+            if (!document.hidden) {
+              safeMarkRead(chatId);
+            }
+          }
+
+          const decrypted = await decryptSingleMessage(newDbMsg, chatKey);
+
+          setMessages((prev) => {
+            const exists = prev.findIndex((m) => m.id === newDbMsg.id);
+            if (exists >= 0) {
+              const updated = [...prev];
+              updated[exists] = decrypted;
+              return updated;
+            }
+            return [...prev, decrypted];
+          });
+
+          scrollToBottom();
+        }
+      );
+
+      // Escuchar postgres_changes: UPDATE (actualización de checks en vivo sin volver a descifrar)
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `chat_id=eq.${chatId}`,
+        },
+        (payload) => {
+          if (!isMounted) return;
+          const updatedDbMsg = payload.new as DbMessage;
+          console.log('[ChatDos] UPDATE en message checks:', updatedDbMsg.id, {
+            delivered_at: updatedDbMsg.delivered_at,
+            read_at: updatedDbMsg.read_at,
+          });
+
+          // Actualiza delivered_at / read_at directamente en memoria sin volver a descifrar
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id === updatedDbMsg.id) {
+                return {
+                  ...m,
+                  delivered_at: updatedDbMsg.delivered_at,
+                  read_at: updatedDbMsg.read_at,
+                  viewed_at: updatedDbMsg.viewed_at,
+                  edited_at: updatedDbMsg.edited_at,
+                  deleted_for_all: updatedDbMsg.deleted_for_all,
+                };
+              }
+              return m;
+            })
+          );
+        }
+      );
+
+      // Suscribirse y registrar status en consola
+      channel.subscribe(async (status, err) => {
+        console.log('[ChatDos] canal', status, err);
+        if (status === 'SUBSCRIBED') {
+          const trackRes = await channel.track({ online: true });
+          console.log('[ChatDos] trackStatus', trackRes);
+        }
+      });
+    };
+
+    connectRealtime();
+
+    return () => {
+      isMounted = false;
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (activeChannelRef.current) {
+        activeChannelRef.current.untrack();
+        supabase.removeChannel(activeChannelRef.current);
+        activeChannelRef.current = null;
+      }
+    };
+  }, [chatId, user, partner?.id, chatKey, decryptSingleMessage]);
+
+  // 5. Manejo de visibilidad y RPCs según contrato estricto
+  useEffect(() => {
+    if (!chatId) return;
+
+    // Al abrir el chat
+    safeMarkDelivered();
+    safeMarkRead(chatId);
+    safeTouchLastSeen();
+
+    // touch_last_seen cada 60 s con la app visible
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        safeTouchLastSeen();
+      }
+    }, 60000);
+
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        // En visibilitychange a 'visible': mark_read y touch_last_seen
+        safeTouchLastSeen();
+        safeMarkDelivered();
+        safeMarkRead(chatId);
+      } else {
+        // En visibilitychange a 'hidden': touch_last_seen
+        safeTouchLastSeen();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [chatId]);
+
+  // Manejo de escritura (Broadcast 'typing' cada 2s)
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    if (text.length <= 4000) {
+      setInputText(text);
+
+      e.target.style.height = 'auto';
+      e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+
+      const now = Date.now();
+      if (now - lastTypingBroadcastTime.current > 2000 && user && activeChannelRef.current) {
+        lastTypingBroadcastTime.current = now;
+        activeChannelRef.current.send({
+          type: 'broadcast',
+          event: 'typing',
+          payload: { userId: user.id },
+        });
+      }
+    }
+  };
+
+  // Manejo de teclado (Enter envía en computador, salto de línea en celular)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (!isMobileDevice && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  // 6. Enviar mensaje cifrado
+  const handleSendMessage = async () => {
+    const textToSend = inputText.trim();
+    if (!textToSend || !user || !chatId || !chatKey) return;
+
+    const messageId = crypto.randomUUID();
+    const sentAt = Date.now();
+
+    // Mensaje optimista
+    const optimisticMessage: DecryptedMessage = {
+      id: messageId,
+      chat_id: chatId,
+      sender_id: user.id,
+      kind: 'text',
+      ciphertext: '',
+      iv: '',
+      media_path: null,
+      reply_to: null,
+      view_once: false,
+      created_at: new Date(sentAt).toISOString(),
+      edited_at: null,
+      deleted_for_all: false,
+      delivered_at: null,
+      read_at: null,
+      viewed_at: null,
+      payload: {
+        v: 1,
+        text: textToSend,
+        sentAt,
+      },
+      isPending: true,
+    };
+
+    setMessages((prev) => [...prev, optimisticMessage]);
+    setInputText('');
+    setShowEmojiPicker(false);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+    scrollToBottom();
+
+    try {
+      const payload: MessagePayload = {
+        v: 1,
+        text: textToSend,
+        sentAt,
+      };
+
+      const encrypted = await encryptJSON(chatKey, payload);
+
+      const { error } = await supabase.from('messages').upsert(
+        {
+          id: messageId,
+          chat_id: chatId,
+          sender_id: user.id,
+          kind: 'text',
+          ciphertext: encrypted.ciphertext,
+          iv: encrypted.iv,
+          view_once: false,
+        },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+
+      if (error) {
+        console.error('[ChatDos] error al enviar mensaje:', error);
+        throw error;
+      }
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, isPending: false } : m))
+      );
+    } catch (err) {
+      console.error('[ChatDos] Error en handleSendMessage:', err);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, isPending: true } : m))
+      );
+    }
+  };
+
+  // Abrir modal de Número de Seguridad
+  const handleOpenSecurityModal = async () => {
+    if (!partner?.public_key || !myProfile?.public_key) {
+      setShowSecurityModal(true);
+      return;
+    }
+
+    setCalculatingSecurity(true);
+    setShowSecurityModal(true);
+    try {
+      const num = await computeSecurityNumber(
+        myProfile.public_key as JsonWebKey,
+        partner.public_key as JsonWebKey
+      );
+      setSecurityNumber(num);
+    } catch (err) {
+      console.error('[ChatDos] Error calculando número de seguridad:', err);
+    } finally {
+      setCalculatingSecurity(false);
+    }
+  };
+
+  const renderHeaderStatus = () => {
+    if (isPartnerTyping) {
+      return (
+        <span className="text-white text-xs font-['Inter'] font-semibold animate-pulse">
+          escribiendo...
+        </span>
+      );
+    }
+    if (isPartnerOnline) {
+      return (
+        <span className="text-white/95 text-xs font-['Inter'] font-medium">
+          en línea
+        </span>
+      );
+    }
+    if (partner?.last_seen) {
+      return (
+        <span className="text-white/75 text-[11px] font-['Inter'] truncate">
+          {formatLastSeen(partner.last_seen)}
+        </span>
+      );
+    }
+    return null;
+  };
+
+  if (loadingPartner) {
+    return (
+      <div className="flex-1 flex flex-col justify-center items-center py-12 text-[#5B6670] dark:text-[#E3E7EC]">
+        <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+        <p className="text-xs font-['Inter']">Cargando conversación...</p>
+      </div>
+    );
+  }
+
+  if (errorMsg || !partner) {
+    return (
+      <div className="p-4 bg-white dark:bg-[#253240] rounded-[5px] text-center border border-[#E3E7EC] dark:border-[#003A73] m-4">
+        <p className="text-sm font-['Inter'] text-[#B03030]">
+          {errorMsg || 'No se pudo cargar esta conversación.'}
+        </p>
+        {isAdmin && (
+          <button
+            onClick={() => navigate('/chats')}
+            className="mt-3 px-4 py-2 rounded-[5px] bg-[#005198] text-white text-xs font-['Poppins'] font-semibold"
+          >
+            Volver a Chats
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const partnerName = partner.display_name || partner.username;
+  const hasPartnerKey = !!partner.public_key;
+  const hasInputText = inputText.trim().length > 0;
+
+  return (
+    <div className="flex-1 flex flex-col h-screen w-full relative bg-[#F2F4F7] dark:bg-[#1F2933]">
+      {/* 4. UNA SOLA CABECERA EN EL CHAT (fondo #003A73 con foto, nombre, estado, llave y menú) */}
+      <header className="bg-[#003A73] text-white px-3 h-14 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {/* Flecha para volver (SOLO si soy administrador) */}
+          {isAdmin && (
+            <button
+              onClick={() => navigate('/chats')}
+              className="p-1.5 -ml-1 text-white hover:bg-white/10 rounded-[5px] transition-colors shrink-0"
+              title="Volver a la lista de chats"
+              aria-label="Volver"
+            >
+              <ChevronLeft className="w-6 h-6" strokeWidth={2} />
+            </button>
+          )}
+
+          <div
+            className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer select-none"
+            onClick={handleOpenSecurityModal}
+            title="Toca para ver el Número de Seguridad"
+          >
+            <AvatarImage
+              avatarPath={partner.avatar_path}
+              name={partnerName}
+              size={38}
+            />
+
+            <div className="min-w-0 flex-1">
+              <h1 className="font-['Poppins'] font-semibold text-sm text-white truncate leading-tight flex items-center gap-1.5">
+                <span>{partnerName}</span>
+                {hasPartnerKey && (
+                  <ShieldCheck className="w-3.5 h-3.5 text-white/90 shrink-0" strokeWidth={2} />
+                )}
+              </h1>
+              <div className="h-4 flex items-center">
+                {renderHeaderStatus()}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Botón de Llave para ver el Número de Seguridad */}
+          <button
+            onClick={handleOpenSecurityModal}
+            className="p-2 text-white/85 hover:text-white hover:bg-white/10 rounded-[5px] transition-colors"
+            title="Ver Número de Seguridad E2EE"
+            aria-label="Número de Seguridad"
+          >
+            <KeyRound className="w-5 h-5" strokeWidth={2} />
+          </button>
+
+          {/* Menú de tres puntos */}
+          <div className="relative" ref={headerMenuRef}>
+            <button
+              onClick={() => setHeaderMenuOpen(!headerMenuOpen)}
+              className="p-2 text-white/85 hover:text-white hover:bg-white/10 rounded-[5px] transition-colors"
+              title="Opciones"
+              aria-label="Menú de opciones"
+            >
+              <MoreVertical className="w-5 h-5" strokeWidth={2} />
+            </button>
+
+            {headerMenuOpen && (
+              <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.18)] border border-[#E3E7EC] dark:border-[#003A73] py-1 z-50 animate-in fade-in duration-100">
+                {isAdmin && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setHeaderMenuOpen(false);
+                        navigate('/chats');
+                      }}
+                      className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                    >
+                      <MessageSquare className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                      <span>Mis Chats</span>
+                    </button>
+                    <div className="my-1 border-t border-[#E3E7EC] dark:border-[#003A73]" />
+                  </>
+                )}
+
+                <button
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    navigate('/perfil');
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                >
+                  <User className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                  <span>Mi Perfil</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    navigate('/ajustes');
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                >
+                  <Settings className="w-4 h-4 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                  <span>Ajustes</span>
+                </button>
+
+                <div className="my-1 border-t border-[#E3E7EC] dark:border-[#003A73]" />
+
+                <button
+                  onClick={async () => {
+                    setHeaderMenuOpen(false);
+                    await signOut();
+                    navigate('/login');
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#B03030] hover:bg-[#FDEBD3]/40 flex items-center gap-2.5 transition-colors"
+                >
+                  <LogOut className="w-4 h-4 text-[#B03030]" strokeWidth={2} />
+                  <span>Cerrar Sesión</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Alerta si la llave de la otra persona cambió */}
+      {keyChangedAlert && (
+        <div className="p-2.5 bg-[#FDEBD3] text-[#8A4B00] border-b border-[#F28C1B]/40 text-xs font-['Inter'] flex items-start gap-2 leading-relaxed shrink-0">
+          <ShieldAlert className="w-4 h-4 text-[#8A4B00] shrink-0 mt-0.5" strokeWidth={2} />
+          <div className="flex-1">
+            <strong>Aviso de seguridad:</strong> La llave pública de {partnerName} ha cambiado.
+            Puedes verificar el número de seguridad en persona.
+          </div>
+        </div>
+      )}
+
+      {/* Si la otra persona no tiene llave todavía */}
+      {!hasPartnerKey ? (
+        <div className="flex-1 flex flex-col justify-center items-center py-10 px-4 text-center">
+          <div className="max-w-xs p-5 rounded-[5px] bg-white dark:bg-[#253240] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73] space-y-3">
+            <div className="w-12 h-12 rounded-[5px] bg-[#FDEBD3] flex items-center justify-center mx-auto text-[#8A4B00]">
+              <Clock className="w-6 h-6" strokeWidth={2} />
+            </div>
+            <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white">
+              Esperando a {partnerName}
+            </h3>
+            <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] leading-relaxed">
+              Esperando a que <strong>{partnerName}</strong> entre por primera vez para activar el cifrado.
+            </p>
+          </div>
+        </div>
+      ) : (
+        /* Contenedor de mensajes con scroll */
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto px-3 py-2 space-y-1 flex flex-col"
+        >
+          {hasMoreOlder && (
+            <div className="text-center py-2">
+              <button
+                onClick={loadOlderMessages}
+                disabled={loadingOlder}
+                className="px-3 py-1 bg-white dark:bg-[#253240] text-xs font-['Poppins'] font-medium text-[#005198] dark:text-[#F28C1B] rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] shadow-xs hover:bg-[#F2F4F7] transition-colors"
+              >
+                {loadingOlder ? 'Cargando anteriores...' : 'Cargar mensajes anteriores'}
+              </button>
+            </div>
+          )}
+
+          {loadingMessages ? (
+            <div className="flex-1 flex flex-col justify-center items-center text-[#5B6670] dark:text-[#E3E7EC]">
+              <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+              <p className="text-xs font-['Inter']">Descifrando mensajes...</p>
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="flex-1 flex flex-col justify-center items-center text-center p-6 text-[#5B6670] dark:text-[#E3E7EC]">
+              <p className="text-xs font-['Inter'] bg-white dark:bg-[#253240] px-4 py-2 rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] shadow-xs">
+                No hay mensajes aún. ¡Envía el primer mensaje cifrado a {partnerName}!
+              </p>
+            </div>
+          ) : (
+            messages.map((msg, index) => {
+              const isMine = msg.sender_id === user?.id;
+
+              const currentMsgDate = formatMessageDateSeparator(
+                msg.payload?.sentAt || msg.created_at
+              );
+              const prevMsgDate =
+                index > 0
+                  ? formatMessageDateSeparator(
+                      messages[index - 1].payload?.sentAt || messages[index - 1].created_at
+                    )
+                  : null;
+
+              const showDateSeparator = currentMsgDate !== prevMsgDate;
+
+              return (
+                <React.Fragment key={msg.id}>
+                  {showDateSeparator && (
+                    <div className="flex justify-center my-2 select-none">
+                      <span className="px-3 py-1 rounded-[5px] bg-[#E3E7EC] dark:bg-[#253240] text-[11px] font-['Poppins'] font-medium text-[#5B6670] dark:text-[#E3E7EC] shadow-xs">
+                        {currentMsgDate}
+                      </span>
+                    </div>
+                  )}
+
+                  <MessageItem message={msg} isMine={isMine} />
+                </React.Fragment>
+              );
+            })
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+      )}
+
+      {/* Selector de emojis popover */}
+      {showEmojiPicker && (
+        <EmojiPickerPopover
+          onSelectEmoji={(emoji) => {
+            setInputText((prev) => {
+              if (prev.length + emoji.length <= 4000) {
+                return prev + emoji;
+              }
+              return prev;
+            });
+            textareaRef.current?.focus();
+          }}
+          onClose={() => setShowEmojiPicker(false)}
+        />
+      )}
+
+      {/* 5. Barra inferior de entrada de texto */}
+      <div className="p-2 bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73] shrink-0">
+        <div className="flex items-end gap-2 bg-white dark:bg-[#253240] p-1.5 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
+          {/* Botón de emojis */}
+          <button
+            type="button"
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-[#F28C1B] rounded-[5px] transition-colors shrink-0"
+            title="Insertar emoji"
+            aria-label="Selector de emojis"
+          >
+            <Smile className="w-5 h-5" strokeWidth={2} />
+          </button>
+
+          {/* Campo de texto que crece hasta 5 líneas */}
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={inputText}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              hasPartnerKey
+                ? 'Escribe un mensaje...'
+                : 'Esperando a que la otra persona active su llave...'
+            }
+            disabled={!hasPartnerKey}
+            className="flex-1 max-h-28 py-1.5 px-2 bg-transparent text-sm font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#E3E7EC] resize-none focus:outline-none"
+          />
+
+          {/* 5. Botón enviar:
+              Sin texto: gris claro #E3E7EC con ícono #5B6670
+              Con texto: naranja #F28C1B con ícono #1F2933
+          */}
+          <button
+            type="button"
+            onClick={handleSendMessage}
+            disabled={!hasInputText || !hasPartnerKey}
+            className={`w-11 h-11 rounded-[5px] flex items-center justify-center shrink-0 transition-all ${
+              hasInputText && hasPartnerKey
+                ? 'bg-[#F28C1B] text-[#1F2933] shadow-[0_2px_8px_rgba(0,0,0,0.12)] hover:brightness-105 active:scale-95 cursor-pointer'
+                : 'bg-[#E3E7EC] dark:bg-[#1F2933] text-[#5B6670] dark:text-[#5B6670] cursor-not-allowed'
+            }`}
+            title="Enviar mensaje"
+            aria-label="Enviar mensaje"
+          >
+            <Send
+              className={`w-5 h-5 ${
+                hasInputText && hasPartnerKey ? 'text-[#1F2933]' : 'text-[#5B6670]'
+              }`}
+              strokeWidth={2}
+            />
+          </button>
+        </div>
+      </div>
+
+      {/* Modal para verificar el Número de Seguridad */}
+      {showSecurityModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-[5px] bg-white dark:bg-[#253240] p-5 shadow-[0_2px_8px_rgba(0,0,0,0.15)] border border-[#E3E7EC] dark:border-[#003A73] space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-[#E3E7EC] dark:border-[#003A73]">
+              <div className="flex items-center gap-2 text-[#003A73] dark:text-white">
+                <KeyRound className="w-5 h-5 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                <h3 className="font-['Poppins'] font-bold text-sm">
+                  Número de Seguridad
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowSecurityModal(false)}
+                className="text-[#5B6670] hover:text-[#1F2933] dark:hover:text-white"
+              >
+                <X className="w-5 h-5" strokeWidth={2} />
+              </button>
+            </div>
+
+            {!hasPartnerKey ? (
+              <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] leading-relaxed">
+                {partnerName} aún no ha iniciado sesión por primera vez para generar su llave de cifrado.
+              </p>
+            ) : calculatingSecurity ? (
+              <div className="py-6 flex flex-col items-center justify-center text-[#5B6670] dark:text-[#E3E7EC]">
+                <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#F28C1B]" strokeWidth={2} />
+                <span className="text-xs font-['Inter']">Calculando huella SHA-256 simétrica...</span>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed">
+                  Compara este número de 60 dígitos en persona con <strong>{partnerName}</strong>.
+                  Si ambos ven los mismos dígitos, la conversación está blindada:
+                </p>
+
+                <div className="p-3 bg-[#F2F4F7] dark:bg-[#1F2933] rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] select-all">
+                  <div className="grid grid-cols-3 gap-2 text-center font-mono text-xs font-bold text-[#003A73] dark:text-[#F28C1B] tracking-wider">
+                    {securityNumber?.split(' ').map((grp, idx) => (
+                      <span key={idx} className="py-0.5 bg-white dark:bg-[#253240] rounded-[2px] shadow-xs">
+                        {grp}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowSecurityModal(false)}
+              className="w-full h-10 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-xs hover:bg-[#003A73] transition-colors"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
