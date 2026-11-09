@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Clock, AlertTriangle, Ban, ChevronDown } from 'lucide-react';
+import { Clock, AlertTriangle, Ban, ChevronDown, Check, CheckCheck } from 'lucide-react';
 import type { DecryptedMessage, Reaction } from '../types/chat';
 import { formatMessageTime, parseTextWithLinks } from '../lib/formatters';
 
@@ -10,6 +10,8 @@ interface MessageItemProps {
   partnerName: string;
   reactions: Reaction[];
   highlighted?: boolean;
+  // Primer mensaje de un grupo seguido de la misma persona: lleva la "colita" y más espacio arriba
+  isFirstInGroup?: boolean;
   onOpenActions: (message: DecryptedMessage) => void;
   onQuoteClick: (messageId: string) => void;
   onReactionClick: (message: DecryptedMessage, emoji: string) => void;
@@ -25,6 +27,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   partnerName,
   reactions,
   highlighted = false,
+  isFirstInGroup = true,
   onOpenActions,
   onQuoteClick,
   onReactionClick,
@@ -55,37 +58,45 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
     if (message.isPending) {
       return (
-        <span title="Guardando mensaje...">
-          <Clock className="w-3 h-3 text-white/90 animate-pulse ml-1 inline-block" strokeWidth={2} />
+        <span title="Guardando mensaje..." className="inline-flex">
+          <Clock className="w-3 h-3 text-white/85 animate-pulse" strokeWidth={2} />
         </span>
       );
     }
     if (message.read_at) {
+      // Leído: doble check blanco opaco y más grueso
       return (
-        <span
-          className="text-white font-black tracking-tighter text-[11px] ml-1 select-none"
-          title={`Leído a las ${formatMessageTime(message.read_at)}`}
-        >
-          ✓✓
+        <span title={`Leído a las ${formatMessageTime(message.read_at)}`} className="inline-flex">
+          <CheckCheck className="w-4 h-4 text-white" strokeWidth={2.75} />
         </span>
       );
     }
     if (message.delivered_at) {
       return (
-        <span
-          className="text-white/85 font-semibold tracking-tighter text-[11px] ml-1 select-none"
-          title={`Entregado a las ${formatMessageTime(message.delivered_at)}`}
-        >
-          ✓✓
+        <span title={`Entregado a las ${formatMessageTime(message.delivered_at)}`} className="inline-flex">
+          <CheckCheck className="w-4 h-4 text-white/70" strokeWidth={2} />
         </span>
       );
     }
     return (
-      <span className="text-white/85 font-semibold text-[11px] ml-1 select-none" title="Guardado en servidor">
-        ✓
+      <span title="Guardado en servidor" className="inline-flex">
+        <Check className="w-4 h-4 text-white/70" strokeWidth={2} />
       </span>
     );
   };
+
+  // Hora y checks: flotan a la derecha en la misma línea del texto (como WhatsApp)
+  const metadata = (
+    <span
+      className={`float-right relative top-[5px] ml-2 -mr-0.5 inline-flex items-center gap-1 h-4 text-[11px] leading-none font-['Inter'] select-none ${
+        isMine ? 'text-white/85' : 'text-[#5B6670] dark:text-[#E3E7EC]'
+      }`}
+    >
+      {message.edited_at && !isDeleted && <span className="italic">editado</span>}
+      <span>{timeStr}</span>
+      {renderStatus()}
+    </span>
+  );
 
   // Cita del mensaje que se está respondiendo
   const renderQuote = () => {
@@ -133,6 +144,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         >
           <Ban className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
           <span>{isMine ? 'Eliminaste este mensaje' : 'Se eliminó este mensaje'}</span>
+          <span className="flex-1">{metadata}</span>
         </div>
       );
     }
@@ -142,13 +154,14 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         <div className="flex items-center gap-1.5 text-xs italic py-1 text-[#B03030] dark:text-[#FDEBD3]">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
           <span>No se pudo leer este mensaje</span>
+          <span className="flex-1">{metadata}</span>
         </div>
       );
     }
 
     const segments = parseTextWithLinks(message.payload?.text || '');
     return (
-      <div className="text-sm font-['Inter'] break-words whitespace-pre-wrap">
+      <div className="text-[14px] leading-[19px] font-['Inter'] break-words whitespace-pre-wrap">
         {segments.map((seg, idx) => {
           if (seg.type === 'link') {
             return (
@@ -177,6 +190,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           }
           return <span key={idx}>{seg.content}</span>;
         })}
+        {metadata}
       </div>
     );
   };
@@ -188,24 +202,42 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   }, {});
   const groupedEntries = Object.entries(grouped);
 
+  // Colores de la burbuja (también los usa la colita)
+  const bubbleColor = isMine
+    ? 'bg-[#005198] text-[#FFFFFF]'
+    : 'bg-white dark:bg-[#003A73] text-[#1F2933] dark:text-[#FFFFFF]';
+  const tailColor = isMine ? 'text-[#005198]' : 'text-white dark:text-[#003A73]';
+
   return (
     <div
       id={`msg-${message.id}`}
-      className={`flex flex-col w-full ${isMine ? 'items-end' : 'items-start'} my-1`}
+      className={`flex flex-col w-full ${isMine ? 'items-end' : 'items-start'} ${isFirstInGroup ? 'mt-2' : 'mt-0.5'}`}
     >
       <div
         onContextMenu={handleContextMenu}
         onTouchStart={startPress}
         onTouchEnd={cancelPress}
         onTouchMove={cancelPress}
-        className={`group relative max-w-[82%] px-3.5 py-2 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.06)] leading-relaxed select-text transition-[outline] ${
-          highlighted ? 'outline outline-2 outline-[#005198] dark:outline-white' : ''
-        } ${
-          isMine
-            ? 'bg-[#005198] text-[#FFFFFF] rounded-br-[2px]'
-            : 'bg-white dark:bg-[#003A73] text-[#1F2933] dark:text-[#FFFFFF] border border-[#E3E7EC] dark:border-[#003A73] rounded-bl-[2px]'
-        }`}
+        className={`group relative max-w-[85%] px-2 pt-1.5 pb-2 rounded-[5px] shadow-[0_1px_2px_rgba(0,0,0,0.12)] select-text ${bubbleColor} ${
+          isFirstInGroup ? (isMine ? 'rounded-tr-none' : 'rounded-tl-none') : ''
+        } ${highlighted ? 'outline outline-2 outline-[#005198] dark:outline-white' : ''}`}
       >
+        {/* Colita de la burbuja (solo el primer mensaje del grupo) */}
+        {isFirstInGroup && (
+          <svg
+            viewBox="0 0 8 13"
+            width="8"
+            height="13"
+            aria-hidden="true"
+            className={`absolute top-0 ${isMine ? '-right-2' : '-left-2'} ${tailColor}`}
+          >
+            <path
+              fill="currentColor"
+              d={isMine ? 'M5.188 0H0v11.193l6.467-8.625C7.526 1.156 6.958 0 5.188 0z' : 'M2.812 0H8v11.193L1.533 2.568C.474 1.156 1.042 0 2.812 0z'}
+            />
+          </svg>
+        )}
+
         {/* Botón de opciones al pasar el mouse (computador) */}
         {!(isDeleted && !isMine) && !message.isPending && (
           <button
@@ -213,6 +245,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             onClick={() => onOpenActions(message)}
             className={`hidden md:group-hover:flex absolute top-1 right-1 w-6 h-6 items-center justify-center rounded-[2px] ${
               isMine ? 'bg-[#005198] text-white' : 'bg-white dark:bg-[#003A73] text-[#5B6670] dark:text-[#E3E7EC]'
+            } ${isFirstInGroup ? 'top-0.5' : ''
             }`}
             title="Opciones del mensaje"
             aria-label="Opciones del mensaje"
@@ -224,21 +257,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         {renderQuote()}
         {renderBody()}
 
-        {/* Hora, "editado" y checks */}
-        <div
-          className={`text-[10px] flex items-center justify-end gap-1 mt-1 font-['Inter'] select-none ${
-            isMine ? 'text-white/85' : 'text-[#5B6670] dark:text-[#E3E7EC]'
-          }`}
-        >
-          {message.edited_at && !isDeleted && <span className="italic">editado</span>}
-          <span className="font-medium">{timeStr}</span>
-          {renderStatus()}
-        </div>
       </div>
 
       {/* Reacciones debajo de la burbuja */}
       {groupedEntries.length > 0 && !isDeleted && (
-        <div className={`flex gap-1 -mt-1.5 ${isMine ? 'mr-2' : 'ml-2'} relative z-[1]`}>
+        <div className={`flex gap-1 -mt-1 mb-1 ${isMine ? 'mr-2' : 'ml-2'} relative z-[1]`}>
           {groupedEntries.map(([emoji, users]) => {
             const mineReacted = users.includes(myId);
             return (
