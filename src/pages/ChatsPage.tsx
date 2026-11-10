@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { playIncoming, updateBadge } from '../lib/push';
 import { leerSilencios } from '../lib/mute';
 import { guardarDato, leerDato } from '../lib/offline';
+import { claveLlave, memoria } from '../lib/memoria';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { getLocalPrivateKey, getChatKey, decryptJSON } from '../lib/crypto';
@@ -17,202 +18,210 @@ interface ChatItemWithPreview extends ChatItem {
   lastMessageTime?: string;
   unreadCount?: number;
   muted?: boolean;
+  lastAt?: string;
+}
+
+// Texto corto del último mensaje (se descifra en el celular)
+async function vistaPrevia(
+  chatId: string,
+  partner: Profile,
+  msg: Pick<DbMessage, 'kind' | 'ciphertext' | 'iv' | 'view_once' | 'deleted_for_all'>,
+  myKey: CryptoKey | null
+): Promise<string> {
+  if (msg.deleted_for_all) return 'Se eliminó este mensaje';
+  if (!myKey || !partner.public_key) return 'Mensaje cifrado';
+  try {
+    const k = claveLlave(chatId, partner.public_key);
+    let cKey = memoria.llaves.get(k);
+    if (!cKey) {
+      cKey = await getChatKey(chatId, myKey, partner.public_key as JsonWebKey);
+      memoria.llaves.set(k, cKey);
+    }
+    const payload = await decryptJSON<MessagePayload>(cKey, msg.ciphertext, msg.iv);
+    const kindName = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' }[msg.kind];
+    return msg.view_once ? `${kindName} · ver una vez` : payload.text || (payload.media?.music ? 'Música' : kindName) || '';
+  } catch {
+    return 'Mensaje cifrado';
+  }
+}
+
+const ordenar = (lista: ChatItemWithPreview[]) =>
+  [...lista].sort((a, b) =>
+    a.lastAt && b.lastAt
+      ? b.lastAt.localeCompare(a.lastAt)
+      : a.lastAt
+        ? -1
+        : b.lastAt
+          ? 1
+          : (a.partner.display_name || '').localeCompare(b.partner.display_name || '')
+  );
+
+interface FilaMisChats {
+  chat_id: string;
+  partner: Profile;
+  last_msg: (DbMessage & { created_at: string }) | null;
+  unread: number;
 }
 
 export const ChatsPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [chats, setChats] = useState<ChatItemWithPreview[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Lo que ya se cargó antes se muestra al instante (sin "Cargando...")
+  const enMemoria = user ? (memoria.listas.get(user.id) as ChatItemWithPreview[] | undefined) : undefined;
+  const [chats, setChats] = useState<ChatItemWithPreview[]>(enMemoria ?? []);
+  const [loading, setLoading] = useState(!enMemoria); // solo la primera vez, si no hay nada guardado
+  const [actualizando, setActualizando] = useState(false); // solo cuando la persona toca "actualizar"
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const silenciosRef = useRef<Record<string, string>>({});
+  const chatsRef = useRef(chats);
+  chatsRef.current = chats;
 
-  const fetchChats = useCallback(async () => {
-    if (!user) return;
-    setErrorMsg(null);
-    // Mostrar al instante la última lista guardada en el celular (sirve sin internet)
-    const guardada = await leerDato<ChatItemWithPreview[]>(`lista-chats-${user.id}`);
-    if (guardada?.length) {
-      setChats((actual) => (actual.length ? actual : guardada));
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
+  const mostrar = useCallback(
+    (lista: ChatItemWithPreview[]) => {
+      const ordenada = ordenar(lista);
+      chatsRef.current = ordenada;
+      setChats(ordenada);
+      if (user) {
+        memoria.listas.set(user.id, ordenada);
+        guardarDato(`lista-chats-${user.id}`, ordenada);
+      }
+    },
+    [user]
+  );
 
-    try {
-      // 1. Obtener mis membresías de chat
-      const { data: myMembers, error: memError } = await supabase
-        .from('chat_members')
-        .select('chat_id');
+  // Pide la lista al servidor (en silencio: lo que ya se ve se queda mientras tanto)
+  const fetchChats = useCallback(
+    async (manual = false) => {
+      if (!user) return;
+      setErrorMsg(null);
+      if (manual) setActualizando(true);
 
-      if (memError) throw memError;
-
-      if (!myMembers || myMembers.length === 0) {
-        setChats([]);
-        return;
+      // Sin nada en pantalla: primero la copia guardada en el celular
+      if (!chatsRef.current.length) {
+        const guardada = await leerDato<ChatItemWithPreview[]>(`lista-chats-${user.id}`);
+        if (guardada?.length && !chatsRef.current.length) {
+          chatsRef.current = guardada;
+          setChats(guardada);
+          memoria.listas.set(user.id, guardada);
+          setLoading(false);
+        }
       }
 
-      const chatIds = myMembers.map((m) => m.chat_id);
+      try {
+        // Todo en una sola consulta: chats, la otra persona, último mensaje y no leídos
+        const [{ data, error }, silencios, myKey] = await Promise.all([
+          supabase.rpc('mis_chats'),
+          leerSilencios().catch(() => ({}) as Record<string, string>),
+          getLocalPrivateKey(user.id),
+        ]);
+        if (error) throw error;
+        silenciosRef.current = silencios;
 
-      // 2. Obtener los otros miembros
-      const { data: otherMembers, error: otherError } = await supabase
-        .from('chat_members')
-        .select('chat_id, user_id')
-        .in('chat_id', chatIds)
-        .neq('user_id', user.id);
-
-      if (otherError) throw otherError;
-
-      if (!otherMembers || otherMembers.length === 0) {
-        setChats([]);
-        return;
+        const filas = (data ?? []) as FilaMisChats[];
+        const items = await Promise.all(
+          filas.map(async (f): Promise<ChatItemWithPreview> => {
+            memoria.companeros.set(f.chat_id, f.partner);
+            const m = f.last_msg;
+            return {
+              chat_id: f.chat_id,
+              partner: f.partner,
+              lastMessageText: m ? await vistaPrevia(f.chat_id, f.partner, m, myKey) : '',
+              lastMessageTime: m ? formatChatListTime(m.created_at) : '',
+              lastAt: m?.created_at ?? '',
+              unreadCount: f.unread || 0,
+              muted: !!silencios[f.chat_id],
+            };
+          })
+        );
+        mostrar(items);
+      } catch (err: unknown) {
+        console.error('[ChatsPage] Error al cargar lista de chats:', err);
+        if (!chatsRef.current.length) {
+          // Sin nada que mostrar: aquí sí se avisa
+          setErrorMsg(err instanceof Error ? err.message : 'No se pudieron cargar los chats.');
+        }
+      } finally {
+        setLoading(false);
+        setActualizando(false);
       }
+    },
+    [user, mostrar]
+  );
 
-      const partnerUserIds = Array.from(new Set(otherMembers.map((m) => m.user_id)));
-
-      // 3. Consultar perfiles de compañeros
-      const { data: profiles, error: profError } = await supabase
-        .from('profiles')
-        .select('*')
-        .in('id', partnerUserIds);
-
-      if (profError) throw profError;
-
-      const profileMap = new Map<string, Profile>();
-      (profiles || []).forEach((p: Profile) => profileMap.set(p.id, p));
-
-      // Chats que silencié
-      const silencios = await leerSilencios().catch(() => ({} as Record<string, string>));
-      silenciosRef.current = silencios;
-
-      // 4. Obtener mi llave privada para descifrar últimos mensajes
-      const myPrivateKey = await getLocalPrivateKey(user.id);
-
-      // 5. Para cada chat, obtener último mensaje y contador de no leídos
-      const chatItems: ChatItemWithPreview[] = [];
-
-      for (const m of otherMembers) {
-        const partnerProfile = profileMap.get(m.user_id);
-        if (!partnerProfile) continue;
-
-        let lastMessageText = '';
-        let lastMessageTime = '';
-        let unreadCount = 0;
-
-        try {
-          // Último mensaje del chat
-          const { data: lastMsgs } = await supabase
-            .from('messages')
-            .select('*')
-            .eq('chat_id', m.chat_id)
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (lastMsgs && lastMsgs.length > 0) {
-            const lastMsg = lastMsgs[0] as DbMessage;
-            lastMessageTime = formatChatListTime(lastMsg.created_at);
-
-            // Descifrar si hay llaves disponibles
-            if (lastMsg.deleted_for_all) {
-              lastMessageText = 'Se eliminó este mensaje';
-            } else if (myPrivateKey && partnerProfile.public_key) {
-              try {
-                const cKey = await getChatKey(
-                  m.chat_id,
-                  myPrivateKey,
-                  partnerProfile.public_key as JsonWebKey
-                );
-                const payload = await decryptJSON<MessagePayload>(
-                  cKey,
-                  lastMsg.ciphertext,
-                  lastMsg.iv
-                );
-                const kindName = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' }[lastMsg.kind];
-                lastMessageText = lastMsg.view_once
-                  ? `${kindName} · ver una vez`
-                  : payload.text || (payload.media?.music ? 'Música' : kindName) || '';
-              } catch {
-                lastMessageText = 'Mensaje cifrado';
+  // Llegó un mensaje: se actualiza SOLO esa fila, al instante y sin recargar todo
+  const aplicarMensajeNuevo = useCallback(
+    async (msg: DbMessage) => {
+      if (!user) return;
+      const fila = chatsRef.current.find((c) => c.chat_id === msg.chat_id);
+      if (!fila) return false;
+      const myKey = await getLocalPrivateKey(user.id);
+      const texto = await vistaPrevia(msg.chat_id, fila.partner, msg, myKey);
+      const actual = chatsRef.current.find((c) => c.chat_id === msg.chat_id);
+      if (!actual) return false;
+      mostrar(
+        chatsRef.current.map((c) =>
+          c.chat_id === msg.chat_id
+            ? {
+                ...c,
+                lastMessageText: texto,
+                lastMessageTime: formatChatListTime(msg.created_at),
+                lastAt: msg.created_at,
+                unreadCount: msg.sender_id !== user.id ? (c.unreadCount || 0) + 1 : c.unreadCount,
               }
-            } else {
-              lastMessageText = 'Mensaje cifrado';
-            }
-          }
-
-          // Contador de no leídos (mensajes de la otra persona sin read_at)
-          const { count } = await supabase
-            .from('messages')
-            .select('*', { count: 'exact', head: true })
-            .eq('chat_id', m.chat_id)
-            .neq('sender_id', user.id)
-            .eq('deleted_for_all', false)
-            .is('read_at', null);
-
-          unreadCount = count || 0;
-        } catch (err) {
-          console.warn('[ChatsPage] Error al procesar previsualización de chat:', m.chat_id, err);
-        }
-
-        chatItems.push({
-          chat_id: m.chat_id,
-          partner: partnerProfile,
-          lastMessageText,
-          lastMessageTime,
-          unreadCount,
-          muted: !!silencios[m.chat_id],
-        });
-      }
-
-      // Ordenar por el mensaje más reciente o por nombre
-      chatItems.sort((a, b) => {
-        if (a.lastMessageTime && b.lastMessageTime) {
-          return b.lastMessageTime.localeCompare(a.lastMessageTime);
-        }
-        return (a.partner.display_name || '').localeCompare(b.partner.display_name || '');
-      });
-
-      setChats(chatItems);
-      guardarDato(`lista-chats-${user.id}`, chatItems);
-    } catch (err: unknown) {
-      console.error('[ChatsPage] Error al cargar lista de chats:', err);
-      if (guardada?.length) {
-        // Sin internet: se queda la lista guardada
-      } else if (err instanceof Error) {
-        setErrorMsg(err.message);
-      } else {
-        setErrorMsg('No se pudieron cargar los chats.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
+            : c
+        )
+      );
+      return true;
+    },
+    [user, mostrar]
+  );
 
   useEffect(() => {
     fetchChats();
 
-    // Suscripción en tiempo real a mensajes para actualizar la vista previa de la lista
+    // Cambios menores (checks, borrados...): una sola actualización silenciosa
+    let espera: ReturnType<typeof setTimeout> | null = null;
+    const actualizarPronto = (ms = 1200) => {
+      if (espera) clearTimeout(espera);
+      espera = setTimeout(() => {
+        fetchChats();
+        updateBadge();
+      }, ms);
+    };
+
     const channel = supabase
       .channel('admin-chats-list')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages' },
-        (cambio) => {
-          const nuevo = cambio.new as { sender_id?: string; chat_id?: string } | null;
-          const silenciado = !!(nuevo?.chat_id && silenciosRef.current[nuevo.chat_id] && new Date(silenciosRef.current[nuevo.chat_id]).getTime() > Date.now());
-          if (cambio.eventType === 'INSERT' && nuevo?.sender_id && nuevo.sender_id !== user?.id && !document.hidden && !silenciado) {
-            playIncoming('list');
-          }
-          fetchChats();
-          setTimeout(updateBadge, 1000);
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, async (cambio) => {
+        const nuevo = cambio.new as DbMessage | null;
+        if (cambio.eventType === 'INSERT' && nuevo?.chat_id) {
+          const silenciado = !!(
+            silenciosRef.current[nuevo.chat_id] && new Date(silenciosRef.current[nuevo.chat_id]).getTime() > Date.now()
+          );
+          if (nuevo.sender_id !== user?.id && !document.hidden && !silenciado) playIncoming('list');
+          const ok = await aplicarMensajeNuevo(nuevo);
+          updateBadge();
+          if (!ok) actualizarPronto(300); // chat nuevo que aún no está en la lista
+          return;
         }
-      )
+        actualizarPronto();
+      })
       .subscribe();
 
+    // Al volver a la app se actualiza en silencio
+    const alVolver = () => {
+      if (!document.hidden) actualizarPronto(300);
+    };
+    document.addEventListener('visibilitychange', alVolver);
+    window.addEventListener('online', alVolver);
+
     return () => {
+      if (espera) clearTimeout(espera);
+      document.removeEventListener('visibilitychange', alVolver);
+      window.removeEventListener('online', alVolver);
       supabase.removeChannel(channel);
     };
-  }, [fetchChats, user?.id]);
+  }, [fetchChats, aplicarMensajeNuevo, user?.id]);
 
   return (
     <div className="flex-1 flex flex-col relative pb-20">
@@ -226,13 +235,13 @@ export const ChatsPage: React.FC = () => {
         </div>
 
         <button
-          onClick={fetchChats}
-          disabled={loading}
+          onClick={() => fetchChats(true)}
+          disabled={loading || actualizando}
           className="p-2 rounded-[5px] hover:bg-[#E3E7EC] dark:hover:bg-[#003A73] text-[#5B6670] dark:text-[#E3E7EC] transition-colors"
           title="Actualizar lista"
           aria-label="Actualizar lista"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} strokeWidth={2} />
+          <RefreshCw className={`w-4 h-4 ${actualizando ? 'animate-spin' : ''}`} strokeWidth={2} />
         </button>
       </div>
 
@@ -244,9 +253,20 @@ export const ChatsPage: React.FC = () => {
 
       {/* Lista estilo WhatsApp de conversaciones con último mensaje descifrado */}
       {loading ? (
-        <div className="flex-1 flex flex-col justify-center items-center py-12 text-[#5B6670] dark:text-[#E3E7EC]">
-          <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
-          <p className="text-xs font-['Inter']">Cargando conversaciones...</p>
+        // Solo la primera vez en un celular nuevo: filas grises de relleno (sin ruedita)
+        <div
+          className="bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73] divide-y divide-[#E3E7EC] dark:divide-[#003A73] overflow-hidden"
+          aria-label="Preparando tus conversaciones"
+        >
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="flex items-center gap-3 p-3.5">
+              <div className="w-[46px] h-[46px] rounded-full bg-[#E3E7EC] dark:bg-[#1F2933] animate-pulse shrink-0" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-1/3 rounded bg-[#E3E7EC] dark:bg-[#1F2933] animate-pulse" />
+                <div className="h-2.5 w-2/3 rounded bg-[#E3E7EC] dark:bg-[#1F2933] animate-pulse" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : chats.length === 0 ? (
         <div className="flex-1 flex flex-col justify-center items-center py-12 px-4 text-center bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
@@ -265,7 +285,12 @@ export const ChatsPage: React.FC = () => {
               <div
                 key={item.chat_id}
                 className="flex items-center justify-between p-3.5 hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] transition-colors cursor-pointer group"
-                onClick={() => navigate(`/chat/${item.chat_id}`)}
+                onClick={() => {
+                  if (item.unreadCount) {
+                    mostrar(chatsRef.current.map((c) => (c.chat_id === item.chat_id ? { ...c, unreadCount: 0 } : c)));
+                  }
+                  navigate(`/chat/${item.chat_id}`);
+                }}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <AvatarImage

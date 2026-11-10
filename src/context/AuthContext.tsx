@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { safeMarkDelivered, safeTouchLastSeen } from '../lib/rpc';
 import type { Profile } from '../types/database';
 import { desactivarBloqueo } from '../lib/bloqueo';
+import { vaciarMemoria } from '../lib/memoria';
 import { borrarSesionLocal, borrarTodoLocal, guardarSesionLocal, leerSesionLocal } from '../lib/offline';
 
 // Sin internet: recuperar el usuario guardado por Supabase en el celular
@@ -85,6 +86,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Para invitados: obtiene el ID de su único chat
   const getMySingleChatId = async (): Promise<string | null> => {
     const guardado = leerSesionLocal()?.chatId ?? null;
+    if (guardado) {
+      // Al instante con lo guardado; se confirma con el servidor por detrás
+      buscarChatId(guardado);
+      return guardado;
+    }
+    return buscarChatId(null);
+  };
+
+  const buscarChatId = async (guardado: string | null): Promise<string | null> => {
     try {
       const { data, error } = await supabase
         .from('chat_members')
@@ -105,25 +115,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let mounted = true;
 
+    // El usuario y el perfil se cambian solo si de verdad cambiaron.
+    // (Antes, cada renovación automática de la sesión hacía recargar las pantallas abiertas.)
+    const fijarUsuario = (u: User | null) => setUser((prev) => (prev?.id === u?.id ? prev : u));
+    const fijarPerfil = (p: Profile | null) =>
+      setProfile((prev) => (JSON.stringify(prev) === JSON.stringify(p) ? prev : p));
+
+    const refrescarPerfil = async (userId: string) => {
+      const [userProfile, adminFlag] = await Promise.all([loadProfile(userId), checkIsAdmin(userId)]);
+      if (!mounted) return;
+      fijarPerfil(userProfile);
+      setIsAdmin(adminFlag);
+    };
+
     const initAuth = async () => {
+      // 1) Entrada instantánea: si ya se había iniciado sesión en este celular, se usa lo guardado
+      const previo = usuarioGuardado();
+      const cache = previo ? delCache(previo.id) : null;
+      if (previo && cache?.profile) {
+        fijarUsuario(previo);
+        fijarPerfil(cache.profile);
+        setIsAdmin(!!cache.isAdmin);
+        setLoading(false);
+      }
+
+      // 2) Luego se confirma con el servidor, sin bloquear la pantalla
       try {
         const { data: { session } } = await supabase.auth.getSession();
         // Sin internet la sesión puede no renovarse: se usa el usuario guardado en el celular
         const usuario = session?.user ?? usuarioGuardado();
         if (mounted) {
           setSession(session);
-          setUser(usuario);
-
-          if (usuario) {
-            const [userProfile, adminFlag] = await Promise.all([
-              loadProfile(usuario.id),
-              checkIsAdmin(usuario.id),
-            ]);
-            if (mounted) {
-              setProfile(userProfile);
-              setIsAdmin(adminFlag);
-            }
-          }
+          fijarUsuario(usuario);
+          if (usuario) await refrescarPerfil(usuario.id);
         }
       } catch (err) {
         console.warn('[Auth] Error inicializando sesión:', err);
@@ -137,27 +161,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuth();
 
     // Escucha cambios de autenticación
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, currentSession) => {
-        // Sin internet, un fallo al renovar la sesión no debe sacar a la persona de la app
-        if (!currentSession && event !== 'SIGNED_OUT' && usuarioGuardado()) return;
-        setSession(currentSession);
-        setUser(currentSession?.user ?? null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
+      // Sin internet, un fallo al renovar la sesión no debe sacar a la persona de la app
+      if (!currentSession && event !== 'SIGNED_OUT' && usuarioGuardado()) return;
+      setSession(currentSession);
+      fijarUsuario(currentSession?.user ?? null);
 
-        if (currentSession?.user) {
-          const [userProfile, adminFlag] = await Promise.all([
-            loadProfile(currentSession.user.id),
-            checkIsAdmin(currentSession.user.id),
-          ]);
-          setProfile(userProfile);
-          setIsAdmin(adminFlag);
-        } else {
-          setProfile(null);
-          setIsAdmin(false);
-        }
-        setLoading(false);
+      if (!currentSession?.user) {
+        setProfile(null);
+        setIsAdmin(false);
+      } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+        // La renovación automática (TOKEN_REFRESHED) no necesita volver a pedir el perfil
+        setTimeout(() => refrescarPerfil(currentSession.user.id), 0);
       }
-    );
+      setLoading(false);
+    });
 
     return () => {
       mounted = false;
@@ -258,6 +276,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await supabase.auth.signOut();
     } finally {
       borrarSesionLocal();
+      vaciarMemoria();
       await borrarTodoLocal();
       setUser(null);
       setSession(null);

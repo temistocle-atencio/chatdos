@@ -18,6 +18,7 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { AppLock } from './components/AppLock';
 import { Logo } from './components/Logo';
 import { hasLocalPrivateKey } from './lib/crypto';
+import { memoria } from './lib/memoria';
 
 // Redirección inteligente de la ruta raíz '/' según el rol y el estado de la llave
 const RootRedirect: React.FC = () => {
@@ -33,7 +34,9 @@ const RootRedirect: React.FC = () => {
     }
 
     // Comprobar si la llave local ya existe
-    hasLocalPrivateKey(user.id).then(async (hasKey) => {
+    const llave = memoria.llaveLista.has(user.id) ? Promise.resolve(true) : hasLocalPrivateKey(user.id);
+    llave.then(async (hasKey) => {
+      if (hasKey) memoria.llaveLista.add(user.id);
       if (!hasKey) {
         if (!profile?.public_key) {
           setDestination('/llave/crear');

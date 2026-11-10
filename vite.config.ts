@@ -28,7 +28,8 @@ export default defineConfig(() => {
           theme_color: '#003A73',
           background_color: '#F2F4F7',
           display: 'standalone',
-          start_url: '/chatdos/#/login',
+          start_url: '/chatdos/',
+          lang: 'es',
           scope: '/chatdos/',
           icons: [
             {

@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { hasLocalPrivateKey } from '../lib/crypto';
 import { Logo } from './Logo';
+import { memoria } from '../lib/memoria';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -13,7 +14,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, adminO
   const { user, profile, isAdmin, loading } = useAuth();
   const location = useLocation();
 
-  const [checkingKey, setCheckingKey] = useState(true);
+  // Si la llave ya se comprobó en esta sesión, no se vuelve a mostrar "Verificando seguridad..."
+  const [checkingKey, setCheckingKey] = useState(() => !(user && memoria.llaveLista.has(user.id)));
   const [keyRedirect, setKeyRedirect] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,8 +39,16 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, adminO
       }
 
       // Verificar si la llave privada ya está en IndexedDB / memoria
+      if (memoria.llaveLista.has(user.id)) {
+        if (isMounted) {
+          setKeyRedirect(null);
+          setCheckingKey(false);
+        }
+        return;
+      }
       const hasKey = await hasLocalPrivateKey(user.id);
       if (hasKey) {
+        memoria.llaveLista.add(user.id);
         if (isMounted) {
           setKeyRedirect(null);
           setCheckingKey(false);

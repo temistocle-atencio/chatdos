@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
+import { claveLlave, memoria } from '../lib/memoria';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeft,
@@ -94,22 +95,36 @@ const shortText = (m: DecryptedMessage): string => {
   return 'Mensaje';
 };
 
+// Burbujas grises mientras llegan los mensajes la primera vez (en lugar de "Cargando...")
+const BurbujasDeRelleno: React.FC = () => (
+  <div className="flex-1 flex flex-col justify-end gap-2 p-4" aria-hidden="true">
+    {['w-2/5 self-start', 'w-1/2 self-end', 'w-1/3 self-end', 'w-3/5 self-start', 'w-2/5 self-end'].map((c, i) => (
+      <div key={i} className={`h-9 rounded-[8px] bg-[#E3E7EC] dark:bg-[#253240] animate-pulse ${c}`} />
+    ))}
+  </div>
+);
+
 export const ChatPage: React.FC = () => {
   const { chatId } = useParams<{ chatId: string }>();
   const { user, profile: myProfile, isAdmin, signOut } = useAuth();
   const navigate = useNavigate();
 
   // Información del compañero de chat
-  const [partner, setPartner] = useState<Profile | null>(null);
-  const [loadingPartner, setLoadingPartner] = useState(true);
+  // Lo que ya se cargó antes se muestra al instante (como una app instalada)
+  const companeroMem = chatId ? memoria.companeros.get(chatId) ?? null : null;
+  const mensajesMem = chatId ? memoria.mensajes.get(chatId) ?? null : null;
+  const [partner, setPartner] = useState<Profile | null>(companeroMem);
+  const [loadingPartner, setLoadingPartner] = useState(!companeroMem);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Llave criptográfica del chat
-  const [chatKey, setChatKey] = useState<CryptoKey | null>(null);
+  const [chatKey, setChatKey] = useState<CryptoKey | null>(() =>
+    chatId && companeroMem?.public_key ? memoria.llaves.get(claveLlave(chatId, companeroMem.public_key)) ?? null : null
+  );
 
   // Mensajes y paginación
-  const [messages, setMessages] = useState<DecryptedMessage[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [messages, setMessages] = useState<DecryptedMessage[]>(mensajesMem ?? []);
+  const [loadingMessages, setLoadingMessages] = useState(!mensajesMem);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
 
@@ -196,10 +211,33 @@ export const ChatPage: React.FC = () => {
   useEffect(() => {
     if (chatAnteriorRef.current !== chatId) {
       chatAnteriorRef.current = chatId;
-      setMessages([]);
-      setChatKey(null);
+      const p = chatId ? memoria.companeros.get(chatId) ?? null : null;
+      const m = chatId ? memoria.mensajes.get(chatId) ?? [] : [];
+      setPartner(p);
+      setLoadingPartner(!p);
+      setMessages(m);
+      setLoadingMessages(!m.length);
+      setChatKey(chatId && p?.public_key ? memoria.llaves.get(claveLlave(chatId, p.public_key)) ?? null : null);
+      primerScrollRef.current = false;
     }
   }, [chatId]);
+
+  // Al abrir el chat se aparece directo en el último mensaje (sin verlo bajar)
+  const primerScrollRef = useRef(false);
+  useLayoutEffect(() => {
+    if (primerScrollRef.current || !messages.length) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    primerScrollRef.current = true;
+  }, [messages.length, loadingPartner]);
+
+  // Recordar los mensajes de este chat para la próxima vez que se abra
+  useEffect(() => {
+    if (!chatId) return;
+    const propios = messages.filter((m) => m.chat_id === chatId);
+    if (propios.length) memoria.mensajes.set(chatId, propios.slice(-150));
+  }, [messages, chatId]);
 
   // 1. Cargar compañero de chat y derivar la llave de chat
   useEffect(() => {
@@ -212,6 +250,7 @@ export const ChatPage: React.FC = () => {
     const aplicarPartner = async (partnerProf: Profile) => {
       if (!isMounted) return;
       setPartner(partnerProf);
+      memoria.companeros.set(chatId, partnerProf);
       if (!partnerProf.public_key) return;
       const pub = JSON.stringify(partnerProf.public_key);
       if (llaveDe === pub) return; // ya está la llave para esta misma llave pública
@@ -220,14 +259,21 @@ export const ChatPage: React.FC = () => {
       if (isMounted) setKeyChangedAlert(hasChanged);
       const myPrivateKey = await getLocalPrivateKey(user.id);
       if (myPrivateKey) {
-        const derived = await getChatKey(chatId, myPrivateKey, partnerProf.public_key as JsonWebKey);
+        const k = claveLlave(chatId, partnerProf.public_key);
+        const derived = memoria.llaves.get(k) ?? (await getChatKey(chatId, myPrivateKey, partnerProf.public_key as JsonWebKey));
+        memoria.llaves.set(k, derived);
         if (isMounted) setChatKey(derived);
       }
     };
 
     const initChat = async () => {
-      setLoadingPartner(true);
       setErrorMsg(null);
+      const enMem = memoria.companeros.get(chatId);
+      if (enMem) {
+        await aplicarPartner(enMem); // al instante; luego se revisa con el servidor
+      } else {
+        setLoadingPartner(true);
+      }
       const guardado = await leerChat(chatId);
       if (guardado) {
         await aplicarPartner(guardado.partner);
@@ -408,7 +454,8 @@ export const ChatPage: React.FC = () => {
     let isMounted = true;
 
     const loadInitialMessages = async () => {
-      setLoadingMessages(true);
+      // La ruedita solo si no hay nada que mostrar todavía
+      if (!messagesRef.current.some((m) => m.chat_id === chatId)) setLoadingMessages(true);
 
       // 1) Primero lo guardado en el celular (aparece al instante, incluso sin internet)
       const [guardados, bandeja] = await Promise.all([leerMensajes(chatId), leerBandeja(chatId)]);
@@ -1447,10 +1494,17 @@ export const ChatPage: React.FC = () => {
   };
 
   if (loadingPartner) {
+    // Solo la primera vez en un celular nuevo: la forma del chat, sin ruedita
     return (
-      <div className="flex-1 flex flex-col justify-center items-center py-12 text-[#5B6670] dark:text-[#E3E7EC]">
-        <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
-        <p className="text-xs font-['Inter']">Cargando conversación...</p>
+      <div className="flex-1 flex flex-col h-full min-h-0 w-full bg-[#F2F4F7] dark:bg-[#1F2933]" aria-label="Abriendo el chat">
+        <div
+          className="bg-[#003A73] px-3 flex items-center gap-2.5 shrink-0"
+          style={{ paddingTop: 'env(safe-area-inset-top)', height: 'calc(3.5rem + env(safe-area-inset-top))' }}
+        >
+          <div className="w-[38px] h-[38px] rounded-full bg-white/15 animate-pulse" />
+          <div className="h-3 w-28 rounded bg-white/15 animate-pulse" />
+        </div>
+        <BurbujasDeRelleno />
       </div>
     );
   }
@@ -1667,10 +1721,7 @@ export const ChatPage: React.FC = () => {
           )}
 
           {loadingMessages ? (
-            <div className="flex-1 flex flex-col justify-center items-center text-[#5B6670] dark:text-[#E3E7EC]">
-              <RefreshCw className="w-6 h-6 animate-spin mb-2 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
-              <p className="text-xs font-['Inter']">Descifrando mensajes...</p>
-            </div>
+            <BurbujasDeRelleno />
           ) : messages.length === 0 ? (
             <div className="flex-1 flex flex-col justify-center items-center text-center p-6 text-[#5B6670] dark:text-[#E3E7EC]">
               <p className="text-xs font-['Inter'] bg-white dark:bg-[#253240] px-4 py-2 rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] shadow-xs">

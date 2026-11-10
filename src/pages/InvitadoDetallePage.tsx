@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { memoria } from '../lib/memoria';
 import {
   KeyRound,
   Trash2,
@@ -17,9 +18,11 @@ export const InvitadoDetallePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [chatId, setChatId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Si viene de la lista de chats, sus datos ya están en memoria: se muestran al instante
+  const enMem = [...memoria.companeros.entries()].find(([, p]) => p.id === id);
+  const [profile, setProfile] = useState<Profile | null>(enMem?.[1] ?? null);
+  const [chatId, setChatId] = useState<string | null>(enMem?.[0] ?? null);
+  const [loading, setLoading] = useState(!enMem);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -35,7 +38,7 @@ export const InvitadoDetallePage: React.FC = () => {
     if (!id) return;
 
     const loadData = async () => {
-      setLoading(true);
+      if (!enMem) setLoading(true);
       setErrorMsg(null);
       try {
         // Cargar perfil del invitado
