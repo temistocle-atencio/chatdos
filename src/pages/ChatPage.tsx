@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   Send,
   Smile,
-  Sticker as IconoSticker,
   RefreshCw,
   ShieldCheck,
   ShieldAlert,
@@ -26,6 +25,11 @@ import {
   EyeOff,
   Bell,
   BellOff,
+  Camera,
+  Keyboard,
+  Lock,
+  ChevronUp,
+  ChevronLeft as FlechaIzq,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import {
@@ -40,7 +44,7 @@ import {
   type Pendiente,
 } from '../lib/offline';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
-import { StickerPanel } from '../components/StickerPanel';
+import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { StickerEditor } from '../components/StickerEditor';
 import { agregarSticker, blobSticker, marcarUsado, type Sticker } from '../lib/stickers';
 import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, textoSilencio } from '../lib/mute';
@@ -145,7 +149,8 @@ export const ChatPage: React.FC = () => {
 
   // Entrada de texto y emojis
   const [inputText, setInputText] = useState('');
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [panel, setPanel] = useState<PestanaExpresiones | null>(null); // emojis / stickers (en lugar del teclado)
+  const ultimaPestana = useRef<PestanaExpresiones>('emojis');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -166,7 +171,6 @@ export const ChatPage: React.FC = () => {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   // Stickers
-  const [stickersOpen, setStickersOpen] = useState(false);
   const [pegada, setPegada] = useState<Blob | null>(null); // imagen pegada en el campo de texto
   const [editorSticker, setEditorSticker] = useState<{ imagen: Blob; enviar: boolean } | null>(null);
   // Silenciar chat
@@ -191,6 +195,12 @@ export const ChatPage: React.FC = () => {
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [recordViewOnce, setRecordViewOnce] = useState(false);
   const recorderRef = useRef<VoiceRecorder | null>(null);
+  // Mantener presionado para grabar (como WhatsApp): soltar = enviar, izquierda = cancelar, arriba = candado
+  const [gesto, setGesto] = useState<'no' | 'mantener' | 'bloqueado'>('no');
+  const [arrastre, setArrastre] = useState({ x: 0, y: 0 });
+  const pulsacion = useRef<{ id: number; x: number; y: number; t: number; soltado: boolean } | null>(null);
+  const ignorarClick = useRef(false);
+  const fotoVideoInputRef = useRef<HTMLInputElement>(null);
   const retryRef = useRef<Map<string, { media: PendingMedia; payload: MessagePayload; viewOnce: boolean; replyId: string | null; fileKey?: string }>>(new Map());
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -1013,7 +1023,7 @@ export const ChatPage: React.FC = () => {
     setMessages((prev) => [...prev, optimisticMessage]);
     setInputText('');
     setReplyTo(null);
-    setShowEmojiPicker(false);
+    setPanel(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -1057,7 +1067,7 @@ export const ChatPage: React.FC = () => {
   // Limpiar el campo de texto
   const resetInput = () => {
     setInputText('');
-    setShowEmojiPicker(false);
+    setPanel(null);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
@@ -1390,7 +1400,6 @@ export const ChatPage: React.FC = () => {
 
   // ----- Stickers -----
   const enviarSticker = async (st: Sticker) => {
-    setStickersOpen(false);
     if (!user) return;
     try {
       const blob = await blobSticker(st);
@@ -1454,26 +1463,93 @@ export const ChatPage: React.FC = () => {
   };
 
   // ----- Notas de voz -----
-  const startRecording = async () => {
-    if (recording) return;
+  const startRecording = async (): Promise<boolean> => {
+    if (recording || recorderRef.current) return false;
     const rec = new VoiceRecorder();
     try {
       await rec.start();
     } catch (err) {
       console.error('[ChatDos] micrófono', err);
       setToast('No se pudo usar el micrófono. Revisa el permiso en los ajustes del navegador.');
-      return;
+      return false;
     }
     recorderRef.current = rec;
     setRecordViewOnce(false);
     setRecordSeconds(0);
     setRecording(true);
+    return true;
   };
 
   const cancelRecording = () => {
     recorderRef.current?.cancel();
     recorderRef.current = null;
     setRecording(false);
+    setGesto('no');
+    pulsacion.current = null;
+  };
+
+  // ----- Mantener presionado el micrófono -----
+  const alPresionarMic = async (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (recording || pulsacion.current) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    pulsacion.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), soltado: false };
+    setArrastre({ x: 0, y: 0 });
+    setGesto('mantener');
+    navigator.vibrate?.(25);
+    const ok = await startRecording();
+    const p = pulsacion.current;
+    if (!ok) {
+      setGesto('no');
+      pulsacion.current = null;
+      return;
+    }
+    // Se soltó mientras el micrófono encendía (por ejemplo, salió el aviso de permiso)
+    if (!p || p.soltado) {
+      cancelRecording();
+      setToast('Mantén presionado el micrófono para grabar y suelta para enviar.');
+    }
+  };
+
+  const alMoverMic = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const p = pulsacion.current;
+    if (!p || p.id !== e.pointerId || gesto !== 'mantener') return;
+    const dx = Math.min(0, e.clientX - p.x);
+    const dy = Math.min(0, e.clientY - p.y);
+    if (dx < -110) {
+      cancelRecording();
+      navigator.vibrate?.(15);
+      ignorarClick.current = true;
+      return;
+    }
+    if (dy < -80) {
+      setGesto('bloqueado');
+      setArrastre({ x: 0, y: 0 });
+      pulsacion.current = null;
+      ignorarClick.current = true;
+      navigator.vibrate?.(15);
+      return;
+    }
+    setArrastre({ x: dx, y: dy });
+  };
+
+  const alSoltarMic = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const p = pulsacion.current;
+    if (!p || p.id !== e.pointerId) return;
+    ignorarClick.current = true;
+    setTimeout(() => (ignorarClick.current = false), 400);
+    if (!recorderRef.current) {
+      p.soltado = true; // aún encendiendo el micrófono
+      return;
+    }
+    pulsacion.current = null;
+    setGesto('no');
+    if (Date.now() - p.t < 500) {
+      cancelRecording();
+      setToast('Mantén presionado el micrófono para grabar y suelta para enviar.');
+      return;
+    }
+    finishRecording();
   };
 
   const finishRecording = async () => {
@@ -1481,6 +1557,8 @@ export const ChatPage: React.FC = () => {
     if (!rec) return;
     recorderRef.current = null;
     setRecording(false);
+    setGesto('no');
+    pulsacion.current = null;
     const { blob, mime, duration } = await rec.stop();
     if (duration < 1 || blob.size < 1000) {
       setToast('El audio es muy corto');
@@ -1898,22 +1976,6 @@ export const ChatPage: React.FC = () => {
         </div>
       )}
 
-      {/* Selector de emojis popover */}
-      {showEmojiPicker && (
-        <EmojiPickerPopover
-          onSelectEmoji={(emoji) => {
-            setInputText((prev) => {
-              if (prev.length + emoji.length <= 4000) {
-                return prev + emoji;
-              }
-              return prev;
-            });
-            textareaRef.current?.focus();
-          }}
-          onClose={() => setShowEmojiPicker(false)}
-        />
-      )}
-
       {/* 5. Barra inferior de entrada de texto */}
       <div
         className="px-2 pt-2 bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73] shrink-0"
@@ -1947,127 +2009,207 @@ export const ChatPage: React.FC = () => {
             </button>
           </div>
         )}
-        <div className="flex items-end gap-2 bg-white dark:bg-[#253240] p-1.5 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
-          {recording ? (
-            <>
-              {/* Grabando nota de voz */}
-              <button
-                type="button"
-                onClick={cancelRecording}
-                className="w-11 h-11 shrink-0 flex items-center justify-center text-[#B03030] dark:text-[#FDEBD3] rounded-[5px]"
-                title="Descartar audio"
-                aria-label="Descartar audio"
-              >
-                <Trash2 className="w-5 h-5" strokeWidth={2} />
-              </button>
-              <div className="flex-1 flex items-center gap-2 px-1 min-h-11 text-sm font-['Inter'] text-[#1F2933] dark:text-white">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
-                <span className="tabular-nums">{formatDuration(recordSeconds)}</span>
-                <span className="text-xs text-[#5B6670] dark:text-[#E3E7EC] truncate">Grabando · máx. 5 min</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setRecordViewOnce((v) => !v)}
-                className={`w-11 h-11 shrink-0 flex flex-col items-center justify-center rounded-[5px] border ${
-                  recordViewOnce
-                    ? 'border-[#005198] text-[#005198] dark:border-white dark:text-white'
-                    : 'border-transparent text-[#5B6670] dark:text-[#E3E7EC]'
-                }`}
-                aria-pressed={recordViewOnce}
-                title="Escuchar una sola vez"
-              >
-                {recordViewOnce ? <Eye className="w-4 h-4" strokeWidth={2} /> : <EyeOff className="w-4 h-4" strokeWidth={2} />}
-                <span className="text-[9px] font-['Inter'] font-semibold leading-none mt-0.5">1 vez</span>
-              </button>
-            </>
-          ) : (
-            <>
-              {/* Botón de emojis */}
-              <button
-                type="button"
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white rounded-[5px] transition-colors shrink-0"
-                title="Insertar emoji"
-                aria-label="Selector de emojis"
-              >
-                <Smile className="w-5 h-5" strokeWidth={2} />
-              </button>
-
-              {/* Campo de texto que crece hasta 5 líneas */}
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={inputText}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                onFocus={() => {
-                  if (isNearBottom()) setTimeout(scrollToBottom, 300);
-                }}
-                placeholder={
-                  hasPartnerKey
-                    ? 'Escribe un mensaje...'
-                    : 'Esperando a que la otra persona active su llave...'
-                }
-                disabled={!hasPartnerKey}
-                onPaste={alPegar}
-                className="flex-1 max-h-28 py-1.5 px-2 bg-transparent text-[16px] md:text-sm font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#E3E7EC] resize-none focus:outline-none"
-              />
-
-              {/* Stickers */}
-              {!editingMsg && !inputText.trim() && (
+        <div className="flex items-end gap-1.5">
+          {/* Cápsula: expresiones · texto · adjuntar · cámara (como WhatsApp) */}
+          <div className="flex-1 min-w-0 flex items-end bg-white dark:bg-[#253240] rounded-[22px] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_1px_3px_rgba(0,0,0,0.08)] px-1 min-h-11 overflow-hidden">
+            {recording && gesto === 'mantener' ? (
+              <>
+                {/* Grabando con el dedo presionado: deslizar a la izquierda cancela */}
+                <div className="flex-1 flex items-center gap-2 pl-3 h-11 text-sm font-['Inter'] text-[#1F2933] dark:text-white">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
+                  <span className="tabular-nums">{formatDuration(recordSeconds)}</span>
+                  <span
+                    className="ml-auto mr-2 flex items-center gap-0.5 text-xs text-[#5B6670] dark:text-[#E3E7EC] whitespace-nowrap"
+                    style={{ transform: `translateX(${arrastre.x * 0.6}px)`, opacity: Math.max(0.25, 1 + arrastre.x / 140) }}
+                  >
+                    <FlechaIzq className="w-4 h-4" strokeWidth={2} /> Desliza para cancelar
+                  </span>
+                </div>
+              </>
+            ) : recording ? (
+              <>
+                {/* Grabación con candado: borrar, tiempo, escuchar una vez */}
                 <button
                   type="button"
-                  onClick={() => setStickersOpen(true)}
+                  onClick={cancelRecording}
+                  className="w-10 h-11 shrink-0 flex items-center justify-center text-[#B03030] dark:text-[#FDEBD3]"
+                  title="Descartar audio"
+                  aria-label="Descartar audio"
+                >
+                  <Trash2 className="w-5 h-5" strokeWidth={2} />
+                </button>
+                <div className="flex-1 flex items-center gap-2 px-1 h-11 text-sm font-['Inter'] text-[#1F2933] dark:text-white">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
+                  <span className="tabular-nums">{formatDuration(recordSeconds)}</span>
+                  <span className="text-xs text-[#5B6670] dark:text-[#E3E7EC] truncate">Grabando · máx. 5 min</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRecordViewOnce((v) => !v)}
+                  className={`w-10 h-10 my-0.5 shrink-0 flex flex-col items-center justify-center rounded-full border ${
+                    recordViewOnce
+                      ? 'border-[#005198] text-[#005198] dark:border-white dark:text-white'
+                      : 'border-transparent text-[#5B6670] dark:text-[#E3E7EC]'
+                  }`}
+                  aria-pressed={recordViewOnce}
+                  title="Escuchar una sola vez"
+                >
+                  {recordViewOnce ? <Eye className="w-4 h-4" strokeWidth={2} /> : <EyeOff className="w-4 h-4" strokeWidth={2} />}
+                  <span className="text-[9px] font-['Inter'] font-semibold leading-none mt-0.5">1 vez</span>
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Emojis y stickers (cambia a teclado cuando el panel está abierto) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (panel) {
+                      setPanel(null);
+                      textareaRef.current?.focus();
+                    } else {
+                      textareaRef.current?.blur();
+                      setPanel(ultimaPestana.current);
+                      setTimeout(scrollToBottom, 50);
+                    }
+                  }}
                   disabled={!hasPartnerKey}
-                  className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white rounded-[5px] transition-colors shrink-0 disabled:opacity-40"
-                  title="Stickers"
-                  aria-label="Stickers"
+                  className="w-10 h-11 shrink-0 flex items-center justify-center text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white transition-colors disabled:opacity-40"
+                  title={panel ? 'Teclado' : 'Emojis y stickers'}
+                  aria-label={panel ? 'Mostrar teclado' : 'Emojis y stickers'}
                 >
-                  <IconoSticker className="w-5 h-5" strokeWidth={2} />
+                  {panel ? <Keyboard className="w-[22px] h-[22px]" strokeWidth={2} /> : <Smile className="w-[22px] h-[22px]" strokeWidth={2} />}
                 </button>
-              )}
 
-              {/* Adjuntar foto, video o audio */}
-              {!editingMsg && (
-                <button
-                  type="button"
-                  onClick={() => setAttachOpen(true)}
-                  disabled={!hasPartnerKey || preparing}
-                  className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white rounded-[5px] transition-colors shrink-0 disabled:opacity-50"
-                  title="Adjuntar"
-                  aria-label="Adjuntar foto, video o audio"
-                >
-                  {preparing ? <RefreshCw className="w-5 h-5 animate-spin" strokeWidth={2} /> : <Paperclip className="w-5 h-5" strokeWidth={2} />}
-                </button>
-              )}
-            </>
-          )}
+                {/* Campo de texto que crece hasta 5 líneas */}
+                <textarea
+                  ref={textareaRef}
+                  rows={1}
+                  value={inputText}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  onFocus={() => {
+                    setPanel(null);
+                    if (isNearBottom()) setTimeout(scrollToBottom, 300);
+                  }}
+                  placeholder={hasPartnerKey ? 'Mensaje' : 'Esperando a que la otra persona active su llave...'}
+                  disabled={!hasPartnerKey}
+                  onPaste={alPegar}
+                  className="flex-1 min-w-0 max-h-28 py-[10px] px-1 bg-transparent text-[16px] md:text-sm leading-[22px] font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#C9CFD6] resize-none focus:outline-none"
+                />
 
-          {/* Botón principal (el único naranja):
-              con texto = enviar; sin texto = grabar nota de voz; grabando = enviar el audio */}
+                {/* Adjuntar: galería, cámara, video, audio */}
+                {!editingMsg && (
+                  <button
+                    type="button"
+                    onClick={() => setAttachOpen(true)}
+                    disabled={!hasPartnerKey || preparing}
+                    className="w-10 h-11 shrink-0 flex items-center justify-center text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white transition-colors disabled:opacity-50"
+                    title="Adjuntar"
+                    aria-label="Adjuntar foto, video o audio"
+                  >
+                    {preparing ? <RefreshCw className="w-5 h-5 animate-spin" strokeWidth={2} /> : <Paperclip className="w-[21px] h-[21px] -rotate-45" strokeWidth={2} />}
+                  </button>
+                )}
+
+                {/* Cámara directa (se oculta al escribir, como en WhatsApp) */}
+                {!editingMsg && !inputText.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      avisarSelectorArchivo();
+                      fotoVideoInputRef.current?.click();
+                    }}
+                    disabled={!hasPartnerKey || preparing}
+                    className="w-10 h-11 shrink-0 flex items-center justify-center text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white transition-colors disabled:opacity-50"
+                    title="Cámara"
+                    aria-label="Abrir la cámara"
+                  >
+                    <Camera className="w-[22px] h-[22px]" strokeWidth={2} />
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Botón redondo (el único naranja): con texto = enviar; sin texto = mantener para grabar; candado = enviar audio */}
           {(() => {
             const canUse = hasPartnerKey;
-            const mode = recording ? 'sendAudio' : hasInputText || editingMsg ? 'send' : 'mic';
+            const mode = recording && gesto !== 'mantener' ? 'sendAudio' : recording ? 'holding' : hasInputText || editingMsg ? 'send' : 'mic';
             const label =
-              mode === 'sendAudio' ? 'Enviar audio' : mode === 'mic' ? 'Grabar nota de voz' : editingMsg ? 'Guardar cambios' : 'Enviar mensaje';
+              mode === 'sendAudio'
+                ? 'Enviar audio'
+                : mode === 'mic' || mode === 'holding'
+                  ? 'Mantén presionado para grabar'
+                  : editingMsg
+                    ? 'Guardar cambios'
+                    : 'Enviar mensaje';
+            const activo = canUse && (mode !== 'send' || hasInputText);
+            const esMic = mode === 'mic' || mode === 'holding';
             return (
-              <button
-                type="button"
-                onClick={mode === 'sendAudio' ? finishRecording : mode === 'mic' ? startRecording : handleSendMessage}
-                disabled={!canUse || (mode === 'send' && !hasInputText)}
-                className={`w-11 h-11 rounded-[5px] flex items-center justify-center shrink-0 transition-all ${
-                  canUse && (mode !== 'send' || hasInputText)
-                    ? 'bg-[#F28C1B] text-[#1F2933] shadow-[0_2px_8px_rgba(0,0,0,0.12)] hover:brightness-105 active:scale-95 cursor-pointer'
-                    : 'bg-[#E3E7EC] dark:bg-[#1F2933] text-[#5B6670] cursor-not-allowed'
-                }`}
-                title={label}
-                aria-label={label}
-              >
-                {mode === 'mic' ? <Mic className="w-5 h-5" strokeWidth={2} /> : <Send className="w-5 h-5" strokeWidth={2} />}
-              </button>
+              <div className="relative shrink-0">
+                {/* Candado: deslizar hacia arriba para seguir grabando sin el dedo */}
+                {gesto === 'mantener' && recording && (
+                  <div
+                    className="absolute bottom-[60px] left-1/2 -translate-x-1/2 w-10 py-2 rounded-full bg-white dark:bg-[#253240] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_2px_8px_rgba(0,0,0,0.15)] flex flex-col items-center gap-1 text-[#5B6670] dark:text-[#E3E7EC] pointer-events-none"
+                    style={{ transform: `translate(-50%, ${arrastre.y * 0.5}px)` }}
+                    aria-hidden="true"
+                  >
+                    <Lock className="w-4 h-4" strokeWidth={2} />
+                    <ChevronUp className="w-4 h-4 animate-bounce" strokeWidth={2} />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onPointerDown={esMic && canUse ? alPresionarMic : undefined}
+                  onPointerMove={esMic ? alMoverMic : undefined}
+                  onPointerUp={esMic ? alSoltarMic : undefined}
+                  onPointerCancel={esMic ? alSoltarMic : undefined}
+                  onContextMenu={(e) => esMic && e.preventDefault()}
+                  onClick={(e) => {
+                    if (ignorarClick.current) return;
+                    if (mode === 'sendAudio') finishRecording();
+                    else if (mode === 'send') handleSendMessage();
+                    else if (mode === 'mic' && e.detail === 0) {
+                      // Teclado (Enter/Espacio): graba con candado
+                      startRecording().then((ok) => ok && setGesto('bloqueado'));
+                    }
+                  }}
+                  disabled={!canUse || (mode === 'send' && !hasInputText)}
+                  className={`w-11 h-11 rounded-full flex items-center justify-center select-none transition-transform duration-150 ${
+                    activo
+                      ? 'bg-[#F28C1B] text-[#1F2933] shadow-[0_2px_8px_rgba(0,0,0,0.15)] hover:brightness-105 cursor-pointer'
+                      : 'bg-[#E3E7EC] dark:bg-[#1F2933] text-[#5B6670] cursor-not-allowed'
+                  } ${mode === 'holding' ? 'scale-[1.45] ring-4 ring-[#F28C1B]/30' : 'active:scale-95'}`}
+                  style={{ touchAction: 'none', WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
+                  title={label}
+                  aria-label={label}
+                >
+                  {esMic ? <Mic className="w-5 h-5" strokeWidth={2} /> : <Send className="w-5 h-5" strokeWidth={2} />}
+                </button>
+              </div>
             );
           })()}
         </div>
+
+        {/* Emojis y stickers en el lugar del teclado */}
+        {panel && user && !recording && (
+          <PanelExpresiones
+            pestana={panel}
+            onPestana={(p) => {
+              ultimaPestana.current = p;
+              setPanel(p);
+            }}
+            onEmoji={(emoji) =>
+              setInputText((prev) => (prev.length + emoji.length <= 4000 ? prev + emoji : prev))
+            }
+            userId={user.id}
+            miLlavePublica={myProfile?.public_key}
+            onSticker={enviarSticker}
+            onCerrar={() => setPanel(null)}
+            onAviso={setToast}
+          />
+        )}
 
         {/* Selectores de archivos (escondidos) */}
         <input
@@ -2075,6 +2217,18 @@ export const ChatPage: React.FC = () => {
           type="file"
           accept="image/*,video/*"
           multiple
+          className="hidden"
+          onChange={(e) => {
+            handleFilePicked(e.target.files);
+            e.target.value = '';
+          }}
+        />
+        {/* Botón cámara de la barra: foto o video (el iPhone deja cambiar entre los dos) */}
+        <input
+          ref={fotoVideoInputRef}
+          type="file"
+          accept="image/*,video/*"
+          capture="environment"
           className="hidden"
           onChange={(e) => {
             handleFilePicked(e.target.files);
@@ -2135,16 +2289,6 @@ export const ChatPage: React.FC = () => {
             avisarSelectorArchivo();
             audioInputRef.current?.click();
           }}
-        />
-      )}
-
-      {stickersOpen && user && (
-        <StickerPanel
-          userId={user.id}
-          miLlavePublica={myProfile?.public_key}
-          onEnviar={enviarSticker}
-          onCerrar={() => setStickersOpen(false)}
-          onAviso={setToast}
         />
       )}
 

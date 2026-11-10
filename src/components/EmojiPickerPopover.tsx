@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import 'emoji-picker-element';
+import es from 'emoji-picker-element/i18n/es';
 import { useTheme } from '../context/ThemeContext';
 
 interface EmojiPickerPopoverProps {
@@ -19,7 +20,10 @@ export const EmojiPickerPopover: React.FC<EmojiPickerPopoverProps> = ({
     if (!container) return;
 
     // Crear el elemento web component
-    const picker = document.createElement('emoji-picker');
+    const picker = document.createElement('emoji-picker') as HTMLElement & { i18n: unknown; locale: string; dataSource: string };
+    picker.i18n = es;
+    picker.locale = 'es';
+    picker.dataSource = 'https://cdn.jsdelivr.net/npm/emoji-picker-element-data@1/es/cldr/data.json';
     picker.classList.add(resolvedTheme === 'dark' ? 'dark' : 'light');
     picker.style.width = '100%';
     picker.style.height = '320px';

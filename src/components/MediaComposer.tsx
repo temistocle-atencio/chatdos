@@ -16,7 +16,7 @@ export interface PendingMedia {
   sticker?: boolean;
 }
 
-// Menú para elegir qué adjuntar
+// Menú para elegir qué adjuntar (cuadrícula como en WhatsApp)
 export const AttachSheet: React.FC<{
   onClose: () => void;
   onGallery: () => void;
@@ -24,33 +24,35 @@ export const AttachSheet: React.FC<{
   onVideoCamera: () => void;
   onAudioFile: () => void;
 }> = ({ onClose, onGallery, onCamera, onVideoCamera, onAudioFile }) => {
-  const item = (icon: React.ReactNode, label: string, hint: string, onClick: () => void) => (
+  const item = (icon: React.ReactNode, color: string, label: string, onClick: () => void) => (
     <button
       type="button"
-      onClick={onClick}
-      className="w-full h-14 px-4 flex items-center gap-3 text-left hover:bg-[#F2F4F7] dark:hover:bg-white/5 transition-colors"
+      onClick={() => {
+        onClose();
+        onClick();
+      }}
+      className="flex flex-col items-center gap-1.5 py-1 active:scale-95 transition-transform"
     >
-      <span className="text-[#005198] dark:text-white">{icon}</span>
-      <span className="flex flex-col">
-        <span className="text-sm font-['Inter'] font-medium text-[#1F2933] dark:text-white">{label}</span>
-        <span className="text-[11px] font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">{hint}</span>
+      <span className="w-[68px] h-[52px] rounded-full dark:brightness-[1.8] border border-[#E3E7EC] dark:border-[#003A73] flex items-center justify-center" style={{ color }} data-icono>
+        {icon}
       </span>
+      <span className="text-[13px] font-['Inter'] text-[#1F2933] dark:text-white">{label}</span>
     </button>
   );
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={onClose}>
       <div
-        className="w-full max-w-md bg-white dark:bg-[#253240] rounded-t-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] py-2"
-        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+        className="w-full max-w-md bg-white dark:bg-[#253240] rounded-t-[20px] shadow-[0_-2px_12px_rgba(0,0,0,0.12)] pt-2 px-4"
+        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-4 pb-1 text-xs font-['Poppins'] font-medium uppercase tracking-[0.06em] text-[#5B6670] dark:text-[#E3E7EC]">
-          Adjuntar
+        <div className="mx-auto mb-4 w-10 h-1 rounded-full bg-[#C9CFD6] dark:bg-[#5B6670]" aria-hidden="true" />
+        <div className="grid grid-cols-4 gap-y-4">
+          {item(<ImageIcon className="w-6 h-6" strokeWidth={2} />, '#005198', 'Galería', onGallery)}
+          {item(<Camera className="w-6 h-6" strokeWidth={2} />, '#F28C1B', 'Cámara', onCamera)}
+          {item(<Video className="w-6 h-6" strokeWidth={2} />, '#003A73', 'Video', onVideoCamera)}
+          {item(<Music className="w-6 h-6" strokeWidth={2} />, '#D46A00', 'Audio', onAudioFile)}
         </div>
-        {item(<ImageIcon className="w-6 h-6" strokeWidth={2} />, 'Fotos y videos', 'De tu galería · puedes elegir hasta 10', onGallery)}
-        {item(<Camera className="w-6 h-6" strokeWidth={2} />, 'Tomar foto', 'Abre la cámara', onCamera)}
-        {item(<Video className="w-6 h-6" strokeWidth={2} />, 'Grabar video', 'Hasta 2 minutos', onVideoCamera)}
-        {item(<Music className="w-6 h-6" strokeWidth={2} />, 'Música o audio', 'Un archivo de tu celular · hasta 25 MB', onAudioFile)}
       </div>
     </div>
   );

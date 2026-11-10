@@ -64,7 +64,9 @@ export const StickerPanel: React.FC<{
   onEnviar: (s: Sticker) => void;
   onCerrar: () => void;
   onAviso: (t: string) => void;
-}> = ({ userId, miLlavePublica, onEnviar, onCerrar, onAviso }) => {
+  /** true: va dentro del panel de expresiones (debajo de la barra de escribir), sin ventana propia */
+  incrustado?: boolean;
+}> = ({ userId, miLlavePublica, onEnviar, onCerrar, onAviso, incrustado = false }) => {
   const [lista, setLista] = useState<Sticker[] | null>(coleccionEnMemoria(userId));
   const [editando, setEditando] = useState(false);
   const [agregando, setAgregando] = useState<{ hechos: number; total: number } | null>(null);
@@ -144,19 +146,24 @@ export const StickerPanel: React.FC<{
   const boton =
     "h-9 px-3 rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] text-[#005198] dark:text-white text-xs font-['Poppins'] font-semibold flex items-center gap-1.5 shrink-0 disabled:opacity-50";
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={onCerrar}>
+  const cuerpo = (
       <div
-        className="w-full max-w-md h-[min(70dvh,480px)] flex flex-col bg-white dark:bg-[#253240] rounded-t-[12px] shadow-[0_-2px_12px_rgba(0,0,0,0.15)]"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        className={
+          incrustado
+            ? 'w-full h-full flex flex-col pt-2'
+            : 'w-full max-w-md h-[min(70dvh,480px)] flex flex-col bg-white dark:bg-[#253240] rounded-t-[12px] shadow-[0_-2px_12px_rgba(0,0,0,0.15)]'
+        }
+        style={incrustado ? undefined : { paddingBottom: 'env(safe-area-inset-bottom)' }}
         onClick={(e) => e.stopPropagation()}
       >
+        {!incrustado && (
         <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
           <h3 className="font-['Poppins'] font-semibold text-base text-[#003A73] dark:text-white">Mis stickers</h3>
           <button type="button" onClick={onCerrar} className="p-2 -mr-2 text-[#5B6670] dark:text-[#E3E7EC]" aria-label="Cerrar">
             <X className="w-5 h-5" strokeWidth={2} />
           </button>
         </div>
+        )}
 
         <div className="flex gap-2 px-4 pb-2 shrink-0 overflow-x-auto">
           <button
@@ -268,18 +275,30 @@ export const StickerPanel: React.FC<{
           }}
         />
       </div>
-      {editar && (
-        <div onClick={(e) => e.stopPropagation()}>
-          <StickerEditor
-            imagen={editar}
-            onCancelar={() => setEditar(null)}
-            onListo={(png) => {
-              setEditar(null);
-              agregarVarios([png]);
-            }}
-          />
-        </div>
-      )}
+  );
+  const editor = editar && (
+    <div onClick={(e) => e.stopPropagation()}>
+      <StickerEditor
+        imagen={editar}
+        onCancelar={() => setEditar(null)}
+        onListo={(png) => {
+          setEditar(null);
+          agregarVarios([png]);
+        }}
+      />
+    </div>
+  );
+  if (incrustado)
+    return (
+      <>
+        {cuerpo}
+        {editor}
+      </>
+    );
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={onCerrar}>
+      {cuerpo}
+      {editor}
     </div>
   );
 };
