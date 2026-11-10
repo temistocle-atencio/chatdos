@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { CampoClave } from '../components/CampoClave';
 
 export const InvitarPage: React.FC = () => {
   const navigate = useNavigate();
@@ -251,8 +252,8 @@ export const InvitarPage: React.FC = () => {
               </div>
 
               <div className="flex gap-2">
-                <input
-                  type="text"
+                <CampoClave
+                  visibleInicial
                   value={clave}
                   onChange={(e) => setClave(e.target.value)}
                   placeholder="Mínimo 8 caracteres"

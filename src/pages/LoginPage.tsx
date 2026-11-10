@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { hasLocalPrivateKey } from '../lib/crypto';
 import { compartirConAdmin, recordarAcceso } from '../lib/cuenta';
+import { CampoClave } from '../components/CampoClave';
 
 export const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -110,8 +111,8 @@ export const LoginPage: React.FC = () => {
             <label className="block text-xs font-['Poppins'] uppercase tracking-wider text-[#5B6670] dark:text-[#E3E7EC] mb-1 font-medium">
               Contraseña
             </label>
-            <input
-              type="password"
+            <CampoClave
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"

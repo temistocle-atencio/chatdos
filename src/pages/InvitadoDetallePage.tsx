@@ -20,6 +20,7 @@ import { cambiarUsuarioInvitado, guardarEnBoveda, leerBoveda, type DatosAcceso }
 import { supabase } from '../lib/supabase';
 import { AvatarImage } from '../components/AvatarImage';
 import type { Profile } from '../types/database';
+import { CampoClave } from '../components/CampoClave';
 
 export const InvitadoDetallePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -398,8 +399,8 @@ export const InvitadoDetallePage: React.FC = () => {
         </p>
 
         <form onSubmit={handleChangePassword} className="space-y-3">
-          <input
-            type="text"
+          <CampoClave
+            visibleInicial
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             placeholder="Nueva contraseña (mínimo 8 caracteres)"

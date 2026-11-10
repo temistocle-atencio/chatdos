@@ -4,6 +4,7 @@ import { KeyRound, ShieldAlert, AlertCircle, RefreshCw, LogOut } from 'lucide-re
 import { useAuth } from '../context/AuthContext';
 import { compartirConAdmin, tomarAccesoPendiente } from '../lib/cuenta';
 import { restoreKeysFromBackup } from '../lib/crypto';
+import { CampoClave } from '../components/CampoClave';
 
 export const RecuperarLlavePage: React.FC = () => {
   const { user, isAdmin, getMySingleChatId, signOut } = useAuth();
@@ -89,8 +90,7 @@ export const RecuperarLlavePage: React.FC = () => {
             <label className="block text-xs font-['Poppins'] uppercase tracking-wider text-[#5B6670] dark:text-[#E3E7EC] mb-1 font-medium">
               Contraseña de Respaldo
             </label>
-            <input
-              type="password"
+            <CampoClave
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"

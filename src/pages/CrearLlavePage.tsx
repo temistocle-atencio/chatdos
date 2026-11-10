@@ -4,6 +4,7 @@ import { ShieldAlert, KeyRound, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { compartirConAdmin, tomarAccesoPendiente } from '../lib/cuenta';
 import { generateAndBackupKeys } from '../lib/crypto';
+import { CampoClave } from '../components/CampoClave';
 
 export const CrearLlavePage: React.FC = () => {
   const { user, refreshProfile, isAdmin, getMySingleChatId } = useAuth();
@@ -102,8 +103,7 @@ export const CrearLlavePage: React.FC = () => {
             <label className="block text-xs font-['Poppins'] uppercase tracking-wider text-[#5B6670] dark:text-[#E3E7EC] mb-1 font-medium">
               Contraseña de Respaldo (mínimo 8)
             </label>
-            <input
-              type="password"
+            <CampoClave
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"
@@ -116,8 +116,7 @@ export const CrearLlavePage: React.FC = () => {
             <label className="block text-xs font-['Poppins'] uppercase tracking-wider text-[#5B6670] dark:text-[#E3E7EC] mb-1 font-medium">
               Confirma tu Contraseña de Respaldo
             </label>
-            <input
-              type="password"
+            <CampoClave
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="••••••••••••"
