@@ -21,6 +21,8 @@ import { supabase } from '../lib/supabase';
 import { AvatarImage } from '../components/AvatarImage';
 import type { Profile } from '../types/database';
 import { CampoClave } from '../components/CampoClave';
+import { leerApariencia, partirNombre, type Apariencia } from '../lib/nombreApp';
+import { Logo } from '../components/Logo';
 
 export const InvitadoDetallePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -101,6 +103,13 @@ export const InvitadoDetallePage: React.FC = () => {
       vivo = false;
     };
   }, [user, chatId, profile?.public_key]);
+
+  // Icono y nombre que esta persona le puso a su app
+  const [suApariencia, setSuApariencia] = useState<Apariencia | null | undefined>(undefined);
+  useEffect(() => {
+    if (!id) return;
+    leerApariencia(id).then(setSuApariencia).catch(() => setSuApariencia(null));
+  }, [id]);
 
   const guardarCopia = async (cambios: DatosAcceso) => {
     if (!user || !chatId || !profile?.public_key) return;
@@ -385,6 +394,35 @@ export const InvitadoDetallePage: React.FC = () => {
         })}
         {!profile.public_key && (
           <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] mt-2">Esta persona todavía no ha entrado por primera vez.</p>
+        )}
+      </div>
+
+      {/* Su app: icono y nombre que eligió */}
+      <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
+        <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider mb-3">Su app</h3>
+        {suApariencia === undefined ? (
+          <div className="h-14 rounded bg-[#E3E7EC] dark:bg-[#1F2933] animate-pulse" />
+        ) : suApariencia === null ? (
+          <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">No se pudo cargar.</p>
+        ) : (
+          <div className="flex items-center gap-3">
+            <div className="w-14 h-14 rounded-full overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933] border border-[#E3E7EC] dark:border-[#003A73] flex items-center justify-center shrink-0">
+              {suApariencia.icono ? (
+                <img src={suApariencia.icono} alt="Su icono" className="w-full h-full object-cover" draggable={false} />
+              ) : (
+                <Logo predeterminado layout="cube" cubeHeight={30} />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="font-['Poppins'] font-bold text-lg truncate">
+                <span className="text-[#005198] dark:text-white">{partirNombre(suApariencia.nombre)[0]}</span>
+                <span className="text-[#F28C1B]">{partirNombre(suApariencia.nombre)[1]}</span>
+              </p>
+              <p className="text-[11px] font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">
+                {suApariencia.icono || suApariencia.nombre !== 'ChatDos' ? 'Lo eligió ella en su perfil' : 'Usa lo predeterminado (ChatDos)'}
+              </p>
+            </div>
+          </div>
         )}
       </div>
 

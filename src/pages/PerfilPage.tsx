@@ -15,6 +15,7 @@ import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { MiCuenta } from '../components/MiCuenta';
 import { MiNota } from '../components/MiNota';
+import { MiApariencia } from '../components/MiApariencia';
 
 export const PerfilPage: React.FC = () => {
   const { user, profile, refreshProfile, signOut } = useAuth();
@@ -273,6 +274,8 @@ export const PerfilPage: React.FC = () => {
       </form>
 
       <MiNota />
+
+      <MiApariencia />
 
       <MiCuenta />
 

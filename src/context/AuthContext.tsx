@@ -7,6 +7,7 @@ import { desactivarBloqueo } from '../lib/bloqueo';
 import { vaciarMemoria } from '../lib/memoria';
 import { vaciarStickers } from '../lib/stickers';
 import { desconectarEnLinea } from '../lib/enLinea';
+import { usarAparienciaDe } from '../lib/nombreApp';
 import { borrarSesionLocal, borrarTodoLocal, guardarSesionLocal, leerSesionLocal } from '../lib/offline';
 
 // Sin internet: recuperar el usuario guardado por Supabase en el celular
@@ -46,6 +47,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Icono y nombre de la app de esta persona (sin sesión: ChatDos)
+  const uid = user?.id ?? null;
+  useEffect(() => {
+    usarAparienciaDe(uid);
+  }, [uid]);
 
   // Carga el perfil del usuario actual desde la tabla 'profiles'
   const loadProfile = async (userId: string): Promise<Profile | null> => {

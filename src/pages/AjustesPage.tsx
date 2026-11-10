@@ -5,12 +5,11 @@ import { useTheme, ThemePreference } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { NotificacionesAjustes } from '../components/NotificacionesAjustes';
 import { BloqueoAjustes } from '../components/BloqueoAjustes';
-import { NombreAppAjustes } from '../components/NombreAppAjustes';
 import { useNombreApp } from '../lib/nombreApp';
 
 export const AjustesPage: React.FC = () => {
   const { theme, setTheme } = useTheme();
-  const { signOut, isAdmin } = useAuth();
+  const { signOut } = useAuth();
   const nombreApp = useNombreApp();
   const navigate = useNavigate();
 
@@ -70,7 +69,6 @@ export const AjustesPage: React.FC = () => {
 
       <BloqueoAjustes />
 
-      {isAdmin && <NombreAppAjustes />}
 
       {/* Sección Privacidad: qué se cifra y qué queda sin cifrar según contrato */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">

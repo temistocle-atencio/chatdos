@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTheme } from '../context/ThemeContext';
-import { partirNombre, useNombreApp } from '../lib/nombreApp';
+import { partirNombre, useApariencia } from '../lib/nombreApp';
 
 export interface LogoProps {
   /**
@@ -19,6 +19,8 @@ export interface LogoProps {
    */
   cubeHeight?: number;
   className?: string;
+  /** true: siempre el cubo y "ChatDos" (sin el icono/nombre propio de la persona) */
+  predeterminado?: boolean;
 }
 
 export const Logo: React.FC<LogoProps> = ({
@@ -26,10 +28,13 @@ export const Logo: React.FC<LogoProps> = ({
   layout = 'horizontal',
   cubeHeight = 36,
   className = '',
+  predeterminado = false,
 }) => {
   // En modo oscuro la versión de color no tiene contraste: se usa la blanca (regla del manual)
   const { resolvedTheme } = useTheme();
-  const [parte1, parte2] = partirNombre(useNombreApp());
+  const propia = useApariencia();
+  const apariencia = predeterminado ? { nombre: 'ChatDos', icono: null } : propia;
+  const [parte1, parte2] = partirNombre(apariencia.nombre);
   const variant = resolvedTheme === 'dark' ? 'white' : variantProp;
 
   // Dimensiones del cubo según manual: ancho 259.8, alto 300 (ratio 0.866)
@@ -77,7 +82,11 @@ export const Logo: React.FC<LogoProps> = ({
   if (layout === 'cube') {
     return (
       <div className={`inline-flex items-center justify-center ${className}`}>
-        {cubeSvg}
+        {apariencia.icono ? (
+          <img src={apariencia.icono} alt="" className="shrink-0 rounded-full object-cover" style={{ width: cubeHeight, height: cubeHeight }} draggable={false} />
+        ) : (
+          cubeSvg
+        )}
       </div>
     );
   }
@@ -88,6 +97,21 @@ export const Logo: React.FC<LogoProps> = ({
   const isHorizontal = layout === 'horizontal';
   const fontSize = isHorizontal ? cubeHeight * 0.54 : cubeHeight * 0.375;
   const gap = isHorizontal ? cubeHeight * 0.2 : cubeHeight * 0.28;
+
+  // Icono propio de la persona (en círculo) en lugar del cubo
+  const isotipo = apariencia.icono ? (
+    <img
+      src={apariencia.icono}
+      alt=""
+      width={cubeHeight}
+      height={cubeHeight}
+      className="shrink-0 rounded-full object-cover"
+      style={{ width: cubeHeight, height: cubeHeight }}
+      draggable={false}
+    />
+  ) : (
+    cubeSvg
+  );
 
   const textNode = (
     <span
@@ -111,7 +135,7 @@ export const Logo: React.FC<LogoProps> = ({
         className={`inline-flex flex-col items-center justify-center ${className}`}
         style={{ gap: `${gap}px` }}
       >
-        {cubeSvg}
+        {isotipo}
         {textNode}
       </div>
     );
@@ -122,7 +146,7 @@ export const Logo: React.FC<LogoProps> = ({
       className={`inline-flex items-center ${className}`}
       style={{ gap: `${gap}px` }}
     >
-      {cubeSvg}
+      {isotipo}
       {textNode}
     </div>
   );
