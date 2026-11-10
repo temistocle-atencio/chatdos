@@ -1,5 +1,6 @@
 import React from 'react';
 import { useTheme } from '../context/ThemeContext';
+import { partirNombre, useNombreApp } from '../lib/nombreApp';
 
 export interface LogoProps {
   /**
@@ -28,6 +29,7 @@ export const Logo: React.FC<LogoProps> = ({
 }) => {
   // En modo oscuro la versión de color no tiene contraste: se usa la blanca (regla del manual)
   const { resolvedTheme } = useTheme();
+  const [parte1, parte2] = partirNombre(useNombreApp());
   const variant = resolvedTheme === 'dark' ? 'white' : variantProp;
 
   // Dimensiones del cubo según manual: ancho 259.8, alto 300 (ratio 0.866)
@@ -98,8 +100,8 @@ export const Logo: React.FC<LogoProps> = ({
       }}
       className="select-none tracking-[-0.02em]"
     >
-      <span style={{ color: variant === 'white' ? '#FFFFFF' : '#005198' }}>Chat</span>
-      <span style={{ color: variant === 'white' ? '#FFFFFF' : '#F28C1B' }}>Dos</span>
+      <span style={{ color: variant === 'white' ? '#FFFFFF' : '#005198' }}>{parte1}</span>
+      {parte2 && <span style={{ color: variant === 'white' ? '#FFFFFF' : '#F28C1B' }}>{parte2}</span>}
     </span>
   );
 

@@ -5,10 +5,13 @@ import { useTheme, ThemePreference } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { NotificacionesAjustes } from '../components/NotificacionesAjustes';
 import { BloqueoAjustes } from '../components/BloqueoAjustes';
+import { NombreAppAjustes } from '../components/NombreAppAjustes';
+import { useNombreApp } from '../lib/nombreApp';
 
 export const AjustesPage: React.FC = () => {
   const { theme, setTheme } = useTheme();
-  const { signOut } = useAuth();
+  const { signOut, isAdmin } = useAuth();
+  const nombreApp = useNombreApp();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -26,7 +29,7 @@ export const AjustesPage: React.FC = () => {
           <span>Ajustes</span>
         </h2>
         <p className="text-xs text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mt-1">
-          Personaliza la apariencia y revisa los parámetros de privacidad de ChatDos.
+          Personaliza la apariencia y revisa los parámetros de privacidad de {nombreApp}.
         </p>
 
         <div className="mt-5">
@@ -67,6 +70,8 @@ export const AjustesPage: React.FC = () => {
 
       <BloqueoAjustes />
 
+      {isAdmin && <NombreAppAjustes />}
+
       {/* Sección Privacidad: qué se cifra y qué queda sin cifrar según contrato */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
         <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider flex items-center gap-2 mb-2">
@@ -76,7 +81,7 @@ export const AjustesPage: React.FC = () => {
 
         <div className="space-y-3 text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed">
           <p>
-            En ChatDos tu conversación estará blindada con cifrado de extremo a extremo (E2EE)
+            En {nombreApp} tu conversación estará blindada con cifrado de extremo a extremo (E2EE)
             mediante Web Crypto estándar (ECDH P-256 + AES-GCM 256).
           </p>
 

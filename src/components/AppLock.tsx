@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Fingerprint, ScanFace } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from './Logo';
+import { useNombreApp } from '../lib/nombreApp';
 import { PinPad } from './PinPad';
 import {
   comprobarPin,
@@ -20,6 +21,7 @@ const esApple = /iPhone|iPad|iPod|Macintosh/.test(typeof navigator !== 'undefine
 /** Pantalla de bloqueo: tapa toda la app hasta poner el PIN o usar Face ID / huella. */
 export const AppLock: React.FC = () => {
   const { user, signOut } = useAuth();
+  const nombreApp = useNombreApp();
   const [config, setConfig] = useState<ConfigBloqueo | null>(null);
   const [bloqueado, setBloqueado] = useState(false);
   const leidoRef = useRef<string | null>(null); // usuario para el que ya se decidió al abrir
@@ -129,14 +131,14 @@ export const AppLock: React.FC = () => {
       style={{ paddingTop: 'calc(env(safe-area-inset-top) + 2rem)', paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.25rem)' }}
       role="dialog"
       aria-modal="true"
-      aria-label="ChatDos está bloqueado"
+      aria-label={`${nombreApp} está bloqueado`}
     >
       <Logo variant="white" layout="cube" cubeHeight={44} />
 
       <div className="w-full max-w-xs px-4 my-6">
         <PinPad
           oscuro
-          titulo="ChatDos está bloqueado"
+          titulo={`${nombreApp} está bloqueado`}
           subtitulo={config.credId ? `Usa ${nombreBiometria()} o tu PIN` : 'Escribe tu PIN'}
           error={espera > 0 ? `Demasiados intentos. Espera ${Math.ceil(espera / 1000)} s` : error}
           deshabilitado={espera > 0}

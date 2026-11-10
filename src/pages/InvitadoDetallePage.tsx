@@ -9,7 +9,14 @@ import {
   Check,
   X,
   MessageSquare,
+  Eye,
+  EyeOff,
+  Copy,
+  Pencil,
+  Lock,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { cambiarUsuarioInvitado, guardarEnBoveda, leerBoveda, type DatosAcceso } from '../lib/cuenta';
 import { supabase } from '../lib/supabase';
 import { AvatarImage } from '../components/AvatarImage';
 import type { Profile } from '../types/database';
@@ -29,6 +36,14 @@ export const InvitadoDetallePage: React.FC = () => {
   // Estados de cambio de contraseña
   const [newPassword, setNewPassword] = useState('');
   const [updatingPass, setUpdatingPass] = useState(false);
+
+  // Datos de acceso guardados cifrados (solo el administrador y el invitado pueden abrirlos)
+  const { user } = useAuth();
+  const [boveda, setBoveda] = useState<DatosAcceso | null | undefined>(undefined);
+  const [ver, setVer] = useState<{ contrasena: boolean; respaldo: boolean }>({ contrasena: false, respaldo: false });
+  const [copiado, setCopiado] = useState<string | null>(null);
+  const [editUsuario, setEditUsuario] = useState<string | null>(null);
+  const [guardandoUsuario, setGuardandoUsuario] = useState(false);
 
   // Estados de eliminación
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -75,6 +90,58 @@ export const InvitadoDetallePage: React.FC = () => {
     loadData();
   }, [id]);
 
+  useEffect(() => {
+    if (!user || !chatId || !profile?.public_key) return;
+    let vivo = true;
+    leerBoveda(user.id, chatId, profile.public_key)
+      .then((d) => vivo && setBoveda(d))
+      .catch(() => vivo && setBoveda(null));
+    return () => {
+      vivo = false;
+    };
+  }, [user, chatId, profile?.public_key]);
+
+  const guardarCopia = async (cambios: DatosAcceso) => {
+    if (!user || !chatId || !profile?.public_key) return;
+    try {
+      await guardarEnBoveda(user.id, chatId, profile.public_key, cambios);
+      setBoveda((b) => ({ ...(b ?? {}), ...cambios }));
+    } catch (e) {
+      console.warn('[cuenta] no se pudo actualizar la copia cifrada', e);
+    }
+  };
+
+  const copiar = async (texto: string, cual: string) => {
+    try {
+      await navigator.clipboard.writeText(texto);
+      setCopiado(cual);
+      setTimeout(() => setCopiado((c) => (c === cual ? null : c)), 1500);
+    } catch {
+      /* nada */
+    }
+  };
+
+  const handleChangeUsername = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id || editUsuario === null || !profile) return;
+    const limpio = editUsuario.trim().toLowerCase();
+    if (limpio === profile.username) return setEditUsuario(null);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setGuardandoUsuario(true);
+    try {
+      const nuevo = await cambiarUsuarioInvitado(id, limpio);
+      setProfile({ ...profile, username: nuevo });
+      await guardarCopia({ usuario: nuevo });
+      setSuccessMsg(`Usuario cambiado a «${nuevo}». Avísale para que entre con ese usuario.`);
+      setEditUsuario(null);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'No se pudo cambiar el usuario.');
+    } finally {
+      setGuardandoUsuario(false);
+    }
+  };
+
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id) return;
@@ -107,6 +174,7 @@ export const InvitadoDetallePage: React.FC = () => {
       }
 
       if (data?.ok) {
+        await guardarCopia({ contrasena: newPassword });
         setSuccessMsg('Contraseña actualizada con éxito.');
         setNewPassword('');
       }
@@ -232,6 +300,92 @@ export const InvitadoDetallePage: React.FC = () => {
           <span>{successMsg}</span>
         </div>
       )}
+
+      {/* Datos de acceso: usuario y contraseñas (copia cifrada que solo ustedes dos pueden abrir) */}
+      <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
+        <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider flex items-center gap-2 mb-1">
+          <Lock className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+          <span>Datos de acceso</span>
+        </h3>
+        <p className="text-[11px] text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mb-3">
+          Guardados cifrados: solo tú y esta persona pueden verlos.
+        </p>
+
+        {/* Usuario */}
+        <div className="py-2.5 border-b border-[#E3E7EC] dark:border-[#003A73]">
+          <span className="block text-[10px] uppercase font-['Poppins'] text-[#5B6670] dark:text-[#E3E7EC]">Usuario</span>
+          {editUsuario === null ? (
+            <div className="flex items-center gap-1">
+              <span className="flex-1 min-w-0 truncate font-mono text-sm font-semibold text-[#003A73] dark:text-white">{profile.username}</span>
+              <button type="button" onClick={() => copiar(profile.username, 'usuario')} className="p-2 text-[#5B6670] dark:text-[#E3E7EC]" aria-label="Copiar usuario">
+                {copiado === 'usuario' ? <Check className="w-4 h-4 text-[#1E7A44]" strokeWidth={2} /> : <Copy className="w-4 h-4" strokeWidth={2} />}
+              </button>
+              <button type="button" onClick={() => setEditUsuario(profile.username)} className="p-2 text-[#005198] dark:text-[#E3E7EC]" aria-label="Cambiar usuario">
+                <Pencil className="w-4 h-4" strokeWidth={2} />
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleChangeUsername} className="mt-1 space-y-2">
+              <input
+                type="text"
+                value={editUsuario}
+                onChange={(e) => setEditUsuario(e.target.value.toLowerCase().replace(/\s/g, ''))}
+                maxLength={20}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                disabled={guardandoUsuario}
+                className="w-full h-11 px-3 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] bg-white dark:bg-[#1F2933] text-sm font-mono text-[#1F2933] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#005198]"
+                aria-label="Nuevo usuario"
+              />
+              <p className="text-[11px] font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">3 a 20: minúsculas, números, punto o guion bajo.</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setEditUsuario(null)} disabled={guardandoUsuario} className="flex-1 h-10 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] text-[#5B6670] dark:text-[#E3E7EC] font-['Poppins'] font-semibold text-xs">
+                  Cancelar
+                </button>
+                <button type="submit" disabled={guardandoUsuario} className="flex-1 h-10 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-xs disabled:opacity-60">
+                  {guardandoUsuario ? 'Guardando…' : 'Guardar usuario'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+
+        {/* Contraseñas */}
+        {(['contrasena', 'respaldo'] as const).map((k) => {
+          const valor = boveda?.[k];
+          const titulo = k === 'contrasena' ? 'Contraseña para entrar' : 'Contraseña de respaldo';
+          return (
+            <div key={k} className="py-2.5 border-b last:border-b-0 border-[#E3E7EC] dark:border-[#003A73]">
+              <span className="block text-[10px] uppercase font-['Poppins'] text-[#5B6670] dark:text-[#E3E7EC]">{titulo}</span>
+              {boveda === undefined ? (
+                <span className="block h-5 w-32 mt-1 rounded bg-[#E3E7EC] dark:bg-[#1F2933] animate-pulse" />
+              ) : valor ? (
+                <div className="flex items-center gap-1">
+                  <span className="flex-1 min-w-0 break-all font-mono text-sm font-semibold text-[#003A73] dark:text-white">
+                    {ver[k] ? valor : '••••••••'}
+                  </span>
+                  <button type="button" onClick={() => setVer((v) => ({ ...v, [k]: !v[k] }))} className="p-2 text-[#5B6670] dark:text-[#E3E7EC]" aria-label={ver[k] ? 'Ocultar' : 'Mostrar'}>
+                    {ver[k] ? <EyeOff className="w-4 h-4" strokeWidth={2} /> : <Eye className="w-4 h-4" strokeWidth={2} />}
+                  </button>
+                  <button type="button" onClick={() => copiar(valor, k)} className="p-2 text-[#5B6670] dark:text-[#E3E7EC]" aria-label="Copiar">
+                    {copiado === k ? <Check className="w-4 h-4 text-[#1E7A44]" strokeWidth={2} /> : <Copy className="w-4 h-4" strokeWidth={2} />}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] mt-0.5 leading-relaxed">
+                  {k === 'contrasena'
+                    ? 'Todavía no está guardada. Aparecerá cuando ella inicie sesión o la cambie, o cuando tú le pongas una nueva aquí abajo.'
+                    : 'Todavía no está guardada. Aparecerá cuando ella la escriba al entrar en un celular nuevo o la cambie en su perfil.'}
+                </p>
+              )}
+            </div>
+          );
+        })}
+        {!profile.public_key && (
+          <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] mt-2">Esta persona todavía no ha entrado por primera vez.</p>
+        )}
+      </div>
 
       {/* Tarjeta para cambiar contraseña */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">

