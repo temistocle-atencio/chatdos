@@ -109,20 +109,7 @@ export const PublicOnlyRoute: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     if (!user) return;
 
-    if (isAdmin) {
-      setTargetPath('/chats');
-      return;
-    }
-
-    setCheckingChat(true);
-    getMySingleChatId().then((chatId) => {
-      setCheckingChat(false);
-      if (chatId) {
-        setTargetPath(`/chat/${chatId}`);
-      } else {
-        setTargetPath('/perfil');
-      }
-    });
+    setTargetPath('/chats');
   }, [user, isAdmin]);
 
   if (loading || checkingChat) {

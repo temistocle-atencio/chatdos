@@ -45,6 +45,8 @@ import {
 } from '../lib/offline';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
+import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
+import { conectarEnLinea, useEnLinea } from '../lib/enLinea';
 import { StickerEditor } from '../components/StickerEditor';
 import { agregarSticker, blobSticker, marcarUsado, type Sticker } from '../lib/stickers';
 import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, textoSilencio } from '../lib/mute';
@@ -139,6 +141,14 @@ export const ChatPage: React.FC = () => {
 
   // Presencia y estado en tiempo real
   const [isPartnerOnline, setIsPartnerOnline] = useState(false);
+  // En línea = tiene la app abierta (o está dentro de este chat)
+  const enLineaGlobal = useEnLinea(partner?.id);
+  const partnerEnLinea = isPartnerOnline || enLineaGlobal;
+  const [verFotoPerfil, setVerFotoPerfil] = useState(false);
+  const cerrarFoto = useCallback(() => setVerFotoPerfil(false), []);
+  useEffect(() => {
+    if (user && chatId) conectarEnLinea(user.id, [chatId]);
+  }, [user, chatId]);
   const [isPartnerTyping, setIsPartnerTyping] = useState(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastTypingBroadcastTime = useRef<number>(0);
@@ -1658,7 +1668,7 @@ export const ChatPage: React.FC = () => {
         </span>
       );
     }
-    if (isPartnerOnline) {
+    if (partnerEnLinea) {
       return (
         <span className="text-white/95 text-xs font-['Inter'] font-medium">
           en línea
@@ -1697,7 +1707,7 @@ export const ChatPage: React.FC = () => {
         <p className="text-sm font-['Inter'] text-[#B03030]">
           {errorMsg || 'No se pudo cargar esta conversación.'}
         </p>
-        {isAdmin && (
+        {(
           <button
             onClick={() => navigate('/chats')}
             className="mt-3 px-4 py-2 rounded-[5px] bg-[#005198] text-white text-xs font-['Poppins'] font-semibold"
@@ -1724,8 +1734,8 @@ export const ChatPage: React.FC = () => {
         style={{ paddingTop: 'env(safe-area-inset-top)', height: 'calc(3.5rem + env(safe-area-inset-top))' }}
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          {/* Flecha para volver (SOLO si soy administrador) */}
-          {isAdmin && (
+          {/* Flecha para volver a la lista de chats */}
+          {(
             <button
               onClick={() => navigate('/chats')}
               className="p-1.5 -ml-1 text-white hover:bg-white/10 rounded-[5px] transition-colors shrink-0"
@@ -1741,11 +1751,20 @@ export const ChatPage: React.FC = () => {
             onClick={handleOpenSecurityModal}
             title="Toca para ver el Número de Seguridad"
           >
-            <AvatarImage
-              avatarPath={partner.avatar_path}
-              name={partnerName}
-              size={38}
-            />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setVerFotoPerfil(true);
+              }}
+              className="relative shrink-0"
+              aria-label={`Ver foto de ${partnerName}`}
+            >
+              <AvatarImage avatarPath={partner.avatar_path} name={partnerName} size={38} />
+              {partnerEnLinea && (
+                <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#25D366] border-2 border-[#003A73]" aria-hidden="true" />
+              )}
+            </button>
 
             <div className="min-w-0 flex-1">
               <h1 className="font-['Poppins'] font-semibold text-sm text-white truncate leading-tight flex items-center gap-1.5">
@@ -2290,6 +2309,10 @@ export const ChatPage: React.FC = () => {
             audioInputRef.current?.click();
           }}
         />
+      )}
+
+      {verFotoPerfil && partner && (
+        <FotoPerfilVisor avatarPath={partner.avatar_path} nombre={partner.display_name || partner.username} onCerrar={cerrarFoto} />
       )}
 
       {editorSticker && user && (

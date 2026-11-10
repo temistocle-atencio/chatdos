@@ -16,6 +16,7 @@ import { Logo } from './Logo';
 import { PWAInstallButton } from './PWAInstallButton';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { iniciarEnLinea } from '../lib/enLinea';
 
 export const AppLayout: React.FC = () => {
   const { user, isAdmin, signOut } = useAuth();
@@ -67,13 +68,12 @@ export const AppLayout: React.FC = () => {
     navigate('/login');
   };
 
-  const handleBack = () => {
-    if (isAdmin) {
-      navigate('/chats');
-    } else {
-      window.history.back();
-    }
-  };
+  const handleBack = () => navigate('/chats');
+
+  // Punto verde de "en línea": se avisa mientras la app esté abierta
+  useEffect(() => {
+    if (user) iniciarEnLinea(user.id);
+  }, [user]);
 
   return (
     <div className={`${isChatRoute ? 'h-[100dvh] overflow-hidden' : 'min-h-screen'} flex flex-col bg-[#F2F4F7] dark:bg-[#1F2933] text-[#1F2933] dark:text-[#FFFFFF] transition-colors`}>
@@ -93,7 +93,7 @@ export const AppLayout: React.FC = () => {
                 </button>
               )}
 
-              <Link to={user ? (isAdmin ? '/chats' : '/') : '/login'} className="flex items-center gap-2">
+              <Link to={user ? '/chats' : '/login'} className="flex items-center gap-2">
                 <Logo variant="white" layout="horizontal" cubeHeight={28} />
               </Link>
             </div>
@@ -123,18 +123,18 @@ export const AppLayout: React.FC = () => {
 
                   {menuOpen && (
                     <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.15)] border border-[#E3E7EC] dark:border-[#003A73] py-1 z-50 animate-in fade-in duration-100">
+                      <button
+                        onClick={() => {
+                          setMenuOpen(false);
+                          navigate('/chats');
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                      >
+                        <MessageSquare className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+                        <span>Mis Chats</span>
+                      </button>
                       {isAdmin && (
                         <>
-                          <button
-                            onClick={() => {
-                              setMenuOpen(false);
-                              navigate('/chats');
-                            }}
-                            className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
-                          >
-                            <MessageSquare className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
-                            <span>Mis Chats</span>
-                          </button>
 
                           <button
                             onClick={() => {

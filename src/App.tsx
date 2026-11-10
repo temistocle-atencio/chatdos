@@ -47,16 +47,7 @@ const RootRedirect: React.FC = () => {
       }
 
       // Si la llave ya está lista:
-      if (isAdmin) {
-        setDestination('/chats');
-      } else {
-        const chatId = await getMySingleChatId();
-        if (chatId) {
-          setDestination(`/chat/${chatId}`);
-        } else {
-          setDestination('/perfil');
-        }
-      }
+      setDestination('/chats');
     });
   }, [user, profile, isAdmin, loading]);
 
@@ -119,11 +110,11 @@ export default function App() {
                 }
               />
 
-              {/* Rutas exclusivas del administrador */}
+              {/* Lista de conversaciones (administrador e invitados) */}
               <Route
                 path="/chats"
                 element={
-                  <ProtectedRoute adminOnly>
+                  <ProtectedRoute>
                     <ChatsPage />
                   </ProtectedRoute>
                 }

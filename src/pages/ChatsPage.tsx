@@ -8,6 +8,8 @@ import { guardarDato, leerDato } from '../lib/offline';
 import { claveLlave, memoria } from '../lib/memoria';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
+import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
+import { conectarEnLinea, useEnLinea } from '../lib/enLinea';
 import { getLocalPrivateKey, getChatKey, decryptJSON } from '../lib/crypto';
 import { formatChatListTime } from '../lib/formatters';
 import type { ChatItem, Profile } from '../types/database';
@@ -20,6 +22,31 @@ interface ChatItemWithPreview extends ChatItem {
   muted?: boolean;
   lastAt?: string;
 }
+
+// Foto con el puntico verde cuando la otra persona tiene la app abierta (tocar = ver la foto)
+const AvatarLista: React.FC<{ partner: Profile; onVer: () => void }> = ({ partner, onVer }) => {
+  const enLinea = useEnLinea(partner.id);
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onVer();
+      }}
+      className="relative shrink-0"
+      aria-label={`Ver foto de ${partner.display_name || partner.username}`}
+    >
+      <AvatarImage avatarPath={partner.avatar_path} name={partner.display_name || partner.username} size={46} />
+      {enLinea && (
+        <span
+          className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#25D366] border-2 border-white dark:border-[#253240]"
+          aria-label="En línea"
+          title="En línea"
+        />
+      )}
+    </button>
+  );
+};
 
 // Texto corto del último mensaje (se descifra en el celular)
 async function vistaPrevia(
@@ -65,12 +92,17 @@ interface FilaMisChats {
 }
 
 export const ChatsPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const [fotoDe, setFotoDe] = useState<Profile | null>(null);
   const navigate = useNavigate();
 
   // Lo que ya se cargó antes se muestra al instante (sin "Cargando...")
   const enMemoria = user ? (memoria.listas.get(user.id) as ChatItemWithPreview[] | undefined) : undefined;
   const [chats, setChats] = useState<ChatItemWithPreview[]>(enMemoria ?? []);
+  const idsChats = chats.map((c) => c.chat_id).join(',');
+  useEffect(() => {
+    if (user && idsChats) conectarEnLinea(user.id, idsChats.split(','));
+  }, [user, idsChats]);
   const [loading, setLoading] = useState(!enMemoria); // solo la primera vez, si no hay nada guardado
   const [actualizando, setActualizando] = useState(false); // solo cuando la persona toca "actualizar"
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -273,10 +305,10 @@ export const ChatsPage: React.FC = () => {
         <div className="flex-1 flex flex-col justify-center items-center py-12 px-4 text-center bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
           <MessageSquare className="w-10 h-10 text-[#005198] dark:text-[#E3E7EC] mb-3" strokeWidth={2} />
           <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white mb-1">
-            No tienes invitados todavía
+            {isAdmin ? 'No tienes invitados todavía' : 'Todavía no tienes conversaciones'}
           </h3>
           <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] max-w-xs">
-            Pulsa "Invitar" para crear la primera cuenta y empezar una conversación privada.
+            {isAdmin ? 'Pulsa "Invitar" para crear la primera cuenta y empezar una conversación privada.' : 'Cuando tu administrador te escriba, la conversación aparecerá aquí.'}
           </p>
         </div>
       ) : (
@@ -294,11 +326,7 @@ export const ChatsPage: React.FC = () => {
                 }}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <AvatarImage
-                    avatarPath={item.partner.avatar_path}
-                    name={item.partner.display_name || item.partner.username}
-                    size={46}
-                  />
+                  <AvatarLista partner={item.partner} onVer={() => setFotoDe(item.partner)} />
                   <div className="min-w-0 flex-1 pr-2">
                     <div className="flex items-center justify-between gap-1">
                       <h4 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white truncate">
@@ -330,7 +358,8 @@ export const ChatsPage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Botón de configuración del invitado */}
+                {/* Botón de configuración del invitado (solo el administrador) */}
+                {isAdmin && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -342,11 +371,13 @@ export const ChatsPage: React.FC = () => {
                 >
                   <Settings2 className="w-4 h-4" strokeWidth={2} />
                 </button>
+                )}
               </div>
             ))}
           </div>
 
-          {/* Botón flotante naranja "Invitar" (ÚNICO botón naranja de la pantalla cuando hay chats) */}
+          {/* Botón flotante naranja "Invitar" (solo el administrador) */}
+          {isAdmin && (
           <div className="fixed bottom-6 right-6 sm:right-[max(1.5rem,calc((100vw-28rem)/2+1.5rem))] z-50">
             <button
               onClick={() => navigate('/invitar')}
@@ -356,7 +387,15 @@ export const ChatsPage: React.FC = () => {
               <span>Invitar</span>
             </button>
           </div>
+          )}
         </>
+      )}
+      {fotoDe && (
+        <FotoPerfilVisor
+          avatarPath={fotoDe.avatar_path}
+          nombre={fotoDe.display_name || fotoDe.username}
+          onCerrar={() => setFotoDe(null)}
+        />
       )}
     </div>
   );

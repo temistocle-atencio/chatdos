@@ -44,13 +44,8 @@ export const LoginPage: React.FC = () => {
           recordarAcceso(usuario, password);
         }
       }
-      if (isAdmin) {
-        navigate('/chats', { replace: true });
-      } else if (chatId) {
-        navigate(`/chat/${chatId}`, { replace: true });
-      } else {
-        navigate('/perfil', { replace: true });
-      }
+      void chatId;
+      navigate('/chats', { replace: true });
     } catch (err: unknown) {
       if (err instanceof Error) {
         setErrorMsg(err.message);

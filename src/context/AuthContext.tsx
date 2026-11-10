@@ -6,6 +6,7 @@ import type { Profile } from '../types/database';
 import { desactivarBloqueo } from '../lib/bloqueo';
 import { vaciarMemoria } from '../lib/memoria';
 import { vaciarStickers } from '../lib/stickers';
+import { desconectarEnLinea } from '../lib/enLinea';
 import { borrarSesionLocal, borrarTodoLocal, guardarSesionLocal, leerSesionLocal } from '../lib/offline';
 
 // Sin internet: recuperar el usuario guardado por Supabase en el celular
@@ -273,6 +274,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     if (user) desactivarBloqueo(user.id);
+    desconectarEnLinea();
     try {
       await supabase.auth.signOut();
     } finally {
