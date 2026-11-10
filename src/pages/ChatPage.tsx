@@ -41,6 +41,7 @@ import {
 } from '../lib/offline';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { StickerPanel } from '../components/StickerPanel';
+import { StickerEditor } from '../components/StickerEditor';
 import { agregarSticker, blobSticker, marcarUsado, type Sticker } from '../lib/stickers';
 import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, textoSilencio } from '../lib/mute';
 import { clearChatNotifications, notifyPartner, playIncoming, updateBadge } from '../lib/push';
@@ -167,6 +168,7 @@ export const ChatPage: React.FC = () => {
   // Stickers
   const [stickersOpen, setStickersOpen] = useState(false);
   const [pegada, setPegada] = useState<Blob | null>(null); // imagen pegada en el campo de texto
+  const [editorSticker, setEditorSticker] = useState<{ imagen: Blob; enviar: boolean } | null>(null);
   // Silenciar chat
   const [silencio, setSilencio] = useState<string | null>(null);
   const [silencioOpen, setSilencioOpen] = useState(false);
@@ -1407,6 +1409,11 @@ export const ChatPage: React.FC = () => {
     try {
       const url = getCachedUrl(msg.id) || (await downloadDecrypted(msg.id, msg.media_path, media.key, media.mime));
       const blob = await (await fetch(url)).blob();
+      // Una foto normal se abre en el editor (borde, forma y textos); un sticker se guarda tal cual
+      if (!media.sticker) {
+        setEditorSticker({ imagen: blob, enviar: false });
+        return;
+      }
       const r = await agregarSticker(user.id, myProfile?.public_key, blob);
       setToast(r.nuevo ? 'Guardado en tus stickers' : 'Ya estaba en tus stickers');
     } catch (e) {
@@ -2138,6 +2145,24 @@ export const ChatPage: React.FC = () => {
         />
       )}
 
+      {editorSticker && user && (
+        <StickerEditor
+          imagen={editorSticker.imagen}
+          onCancelar={() => setEditorSticker(null)}
+          onListo={async (png) => {
+            const { enviar } = editorSticker;
+            setEditorSticker(null);
+            try {
+              const r = await agregarSticker(user.id, myProfile?.public_key, png);
+              if (enviar) await enviarSticker(r.sticker);
+              else setToast('Guardado en tus stickers');
+            } catch (e) {
+              setToast(e instanceof Error ? e.message : 'No se pudo guardar el sticker');
+            }
+          }}
+        />
+      )}
+
       {pegada && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPegada(null)}>
           <div
@@ -2155,6 +2180,17 @@ export const ChatPage: React.FC = () => {
                 className="h-11 rounded-[5px] bg-[#F28C1B] text-[#1F2933] font-['Poppins'] font-semibold text-sm"
               >
                 Enviar sticker y guardarlo
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const b = pegada;
+                  setPegada(null);
+                  if (b) setEditorSticker({ imagen: b, enviar: true });
+                }}
+                className="h-11 rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] text-[#005198] dark:text-white font-['Poppins'] font-semibold text-sm"
+              >
+                Editar: borde y texto
               </button>
               <button
                 type="button"

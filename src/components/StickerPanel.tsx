@@ -7,9 +7,11 @@ import {
   cargarColeccion,
   coleccionEnMemoria,
   urlSticker,
+  esAnimado,
   type Sticker,
 } from '../lib/stickers';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
+import { StickerEditor } from './StickerEditor';
 
 const esIOS = /iPhone|iPad|iPod/.test(typeof navigator !== 'undefined' ? navigator.userAgent : '');
 
@@ -67,6 +69,7 @@ export const StickerPanel: React.FC<{
   const [editando, setEditando] = useState(false);
   const [agregando, setAgregando] = useState<{ hechos: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editar, setEditar] = useState<Blob | null>(null);
   const archivoRef = useRef<HTMLInputElement>(null); // Fotos (galería)
   const carpetaRef = useRef<HTMLInputElement>(null); // Archivos (almacenamiento interno)
 
@@ -79,6 +82,15 @@ export const StickerPanel: React.FC<{
       quitar();
     };
   }, [userId, miLlavePublica]);
+
+  // Una sola imagen (no animada): se abre el editor (borde, forma y textos)
+  const elegir = async (blobs: Blob[]) => {
+    if (blobs.length === 1 && !(await esAnimado(blobs[0]).catch(() => false))) {
+      setEditar(blobs[0]);
+      return;
+    }
+    await agregarVarios(blobs);
+  };
 
   const agregarVarios = async (blobs: Blob[]) => {
     if (!blobs.length) return;
@@ -115,7 +127,7 @@ export const StickerPanel: React.FC<{
         if (tipo) imgs.push(await it.getType(tipo));
       }
       if (!imgs.length) setError('No hay ninguna imagen copiada.');
-      else await agregarVarios(imgs);
+      else await elegir(imgs);
     } catch {
       setError('No se pudo pegar. Mantén presionado el campo de mensaje y elige «Pegar».');
     }
@@ -240,7 +252,7 @@ export const StickerPanel: React.FC<{
           onChange={(e) => {
             const fs = Array.from(e.target.files ?? []).slice(0, 50);
             e.target.value = '';
-            agregarVarios(fs);
+            elegir(fs);
           }}
         />
         <input
@@ -252,10 +264,22 @@ export const StickerPanel: React.FC<{
           onChange={(e) => {
             const fs = Array.from(e.target.files ?? []).slice(0, 50);
             e.target.value = '';
-            agregarVarios(fs);
+            elegir(fs);
           }}
         />
       </div>
+      {editar && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <StickerEditor
+            imagen={editar}
+            onCancelar={() => setEditar(null)}
+            onListo={(png) => {
+              setEditar(null);
+              agregarVarios([png]);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };

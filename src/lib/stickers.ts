@@ -225,3 +225,10 @@ export function vaciarStickers() {
   blobs.clear();
   coleccion = null;
 }
+
+/** ¿Es un sticker animado (GIF o WebP animado)? Esos no se editan para no perder la animación. */
+export async function esAnimado(b: Blob): Promise<boolean> {
+  const bytes = new Uint8Array(await b.slice(0, 64).arrayBuffer());
+  const tipo = leerTipo(bytes);
+  return tipo === 'image/gif' || (tipo === 'image/webp' && webpAnimado(bytes));
+}
