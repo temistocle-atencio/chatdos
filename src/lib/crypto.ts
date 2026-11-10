@@ -503,3 +503,52 @@ export async function checkPartnerKeyChange(
 
   return false;
 }
+
+/**
+ * Cambia la contraseña de respaldo: descifra la llave privada con la actual y la vuelve a
+ * cifrar con la nueva (nueva sal y nuevo IV). La llave no cambia, así que no se pierde ningún mensaje.
+ */
+export async function changeBackupPassword(userId: string, actual: string, nueva: string): Promise<void> {
+  if (!nueva || nueva.length < 8) throw new Error('La nueva contraseña de respaldo debe tener al menos 8 caracteres.');
+  const { data: backup, error } = await supabase.from('key_backups').select('*').eq('user_id', userId).single();
+  if (error || !backup) throw new Error('No se encontró el respaldo de tu llave.');
+
+  const derivar = async (clave: string, salt: Uint8Array, iteraciones: number, usos: KeyUsage[]) => {
+    const base = await window.crypto.subtle.importKey('raw', new TextEncoder().encode(clave), 'PBKDF2', false, ['deriveKey']);
+    return window.crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: salt as BufferSource, iterations: iteraciones, hash: 'SHA-256' },
+      base,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      usos
+    );
+  };
+
+  let pkcs8: ArrayBuffer;
+  try {
+    const vieja = await derivar(actual, base64ToBytes(backup.salt), backup.iterations || 600000, ['decrypt']);
+    pkcs8 = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: base64ToBytes(backup.iv) as BufferSource },
+      vieja,
+      base64ToBytes(backup.wrapped_private_key) as BufferSource
+    );
+  } catch {
+    throw new Error('La contraseña de respaldo actual no es correcta.');
+  }
+
+  const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const nuevaLlave = await derivar(nueva, salt, 600000, ['encrypt']);
+  const cifrado = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, nuevaLlave, pkcs8);
+
+  const { error: errGuardar } = await supabase
+    .from('key_backups')
+    .update({
+      wrapped_private_key: bytesToBase64(new Uint8Array(cifrado)),
+      salt: bytesToBase64(salt),
+      iv: bytesToBase64(iv),
+      iterations: 600000,
+    })
+    .eq('user_id', userId);
+  if (errGuardar) throw new Error('No se pudo guardar la nueva contraseña de respaldo.');
+}
