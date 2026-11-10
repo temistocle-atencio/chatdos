@@ -75,3 +75,10 @@ html.dark body {
 html.dark * {
   border-color: #003A73;
 }
+
+/* Puntos del PIN cuando es incorrecto */
+@keyframes sacudir {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}

@@ -10,6 +10,7 @@ import {
   AtSign,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 
@@ -199,7 +200,10 @@ export const PerfilPage: React.FC = () => {
 
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => {
+                avisarSelectorArchivo();
+                fileInputRef.current?.click();
+              }}
               className="absolute -bottom-1 -right-1 p-2 rounded-[5px] bg-[#005198] hover:bg-[#003A73] text-white shadow-md transition-colors"
               title="Cambiar foto de perfil"
             >

@@ -15,6 +15,7 @@ import { CrearLlavePage } from './pages/CrearLlavePage';
 import { RecuperarLlavePage } from './pages/RecuperarLlavePage';
 import { PruebaCifradoPage } from './pages/PruebaCifradoPage';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { AppLock } from './components/AppLock';
 import { Logo } from './components/Logo';
 import { hasLocalPrivateKey } from './lib/crypto';
 
@@ -172,6 +173,7 @@ export default function App() {
             </Route>
           </Routes>
           <OfflineIndicator />
+          <AppLock />
         </HashRouter>
       </AuthProvider>
     </ThemeProvider>

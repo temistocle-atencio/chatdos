@@ -37,6 +37,7 @@ import {
   quitarDeBandeja,
   type Pendiente,
 } from '../lib/offline';
+import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, textoSilencio } from '../lib/mute';
 import { clearChatNotifications, notifyPartner, playIncoming, updateBadge } from '../lib/push';
 import { useAuth } from '../context/AuthContext';
@@ -1932,9 +1933,18 @@ export const ChatPage: React.FC = () => {
       {attachOpen && (
         <AttachSheet
           onClose={() => setAttachOpen(false)}
-          onGallery={() => galleryInputRef.current?.click()}
-          onCamera={() => cameraInputRef.current?.click()}
-          onAudioFile={() => audioInputRef.current?.click()}
+          onGallery={() => {
+            avisarSelectorArchivo();
+            galleryInputRef.current?.click();
+          }}
+          onCamera={() => {
+            avisarSelectorArchivo();
+            cameraInputRef.current?.click();
+          }}
+          onAudioFile={() => {
+            avisarSelectorArchivo();
+            audioInputRef.current?.click();
+          }}
         />
       )}
 
