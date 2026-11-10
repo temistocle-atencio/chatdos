@@ -1,16 +1,18 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Settings, Moon, Sun, Monitor, LogOut, Info } from 'lucide-react';
+import { Settings, Moon, Sun, Monitor, LogOut, Info, Wallpaper, ChevronRight } from 'lucide-react';
 import { useTheme, ThemePreference } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { NotificacionesAjustes } from '../components/NotificacionesAjustes';
 import { BloqueoAjustes } from '../components/BloqueoAjustes';
+import { FondoChat } from '../components/FondoChat';
 import { useNombreApp } from '../lib/nombreApp';
 
 export const AjustesPage: React.FC = () => {
   const { theme, setTheme } = useTheme();
   const { signOut } = useAuth();
   const nombreApp = useNombreApp();
+  const [fondoOpen, setFondoOpen] = useState(false);
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -64,6 +66,20 @@ export const AjustesPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <button
+        type="button"
+        onClick={() => setFondoOpen(true)}
+        className="w-full bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73] flex items-center gap-3 text-left"
+      >
+        <Wallpaper className="w-5 h-5 text-[#005198] dark:text-[#E3E7EC] shrink-0" strokeWidth={2} />
+        <span className="flex-1">
+          <span className="block font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider">Fondo del chat</span>
+          <span className="block text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">Temas incluidos o una foto tuya</span>
+        </span>
+        <ChevronRight className="w-4 h-4 text-[#5B6670] dark:text-[#E3E7EC]" strokeWidth={2} />
+      </button>
+      {fondoOpen && <FondoChat onCerrar={() => setFondoOpen(false)} />}
 
       <NotificacionesAjustes />
 

@@ -31,6 +31,7 @@ import {
   ChevronUp,
   ChevronLeft as FlechaIzq,
   Eraser,
+  Wallpaper,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import {
@@ -48,6 +49,10 @@ import {
 import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
+import { FondoChat } from '../components/FondoChat';
+import { hayFondo, useFondo } from '../lib/fondo';
+import { CapaFondo } from '../components/CapaFondo';
+import { useTheme } from '../context/ThemeContext';
 import { conectarEnLinea, useEnLinea } from '../lib/enLinea';
 import { cargarNotas, escucharNotas, useNotaDelChat } from '../lib/notas';
 import { StickerEditor } from '../components/StickerEditor';
@@ -151,6 +156,10 @@ export const ChatPage: React.FC = () => {
   const [vaciarOpen, setVaciarOpen] = useState(false);
   const limpiarPantallaRef = useRef<() => void>(() => {});
   const [vaciando, setVaciando] = useState(false);
+  const fondoChat = useFondo();
+  const imagenFondo = hayFondo(fondoChat);
+  const { resolvedTheme } = useTheme();
+  const [fondoOpen, setFondoOpen] = useState(false);
   // Nota de la otra persona (burbujita junto a su foto; se esconde al subir a leer)
   const notaPartner = useNotaDelChat(chatId);
   const [alFinal, setAlFinal] = useState(true);
@@ -1805,6 +1814,8 @@ export const ChatPage: React.FC = () => {
       className="flex-1 flex flex-col h-full min-h-0 w-full relative overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933]"
       style={{ paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}
     >
+      {/* Fondo del chat (tema o foto propia) */}
+      {imagenFondo && <CapaFondo fondo={fondoChat} extraOscuro={resolvedTheme === 'dark' ? 0.45 : 0} />}
       {/* 4. UNA SOLA CABECERA EN EL CHAT (fondo #003A73 con foto, nombre, estado, llave y menú) */}
       <header
         className="bg-[#003A73] text-white px-3 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30"
@@ -1919,6 +1930,17 @@ export const ChatPage: React.FC = () => {
                 <button
                   onClick={() => {
                     setHeaderMenuOpen(false);
+                    setFondoOpen(true);
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                >
+                  <Wallpaper className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+                  <span>Fondo del chat</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
                     setVaciarOpen(true);
                   }}
                   className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#B03030] dark:text-[#FDEBD3] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
@@ -2019,7 +2041,7 @@ export const ChatPage: React.FC = () => {
             const abajo = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
             if (abajo !== alFinal) setAlFinal(abajo);
           }}
-          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-1 pb-3 flex flex-col"
+          className="relative flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-1 pb-3 flex flex-col"
         >
           {hasMoreOlder && (
             <div className="text-center py-2">
@@ -2106,7 +2128,7 @@ export const ChatPage: React.FC = () => {
 
       {/* 5. Barra inferior de entrada de texto */}
       <div
-        className="px-2 pt-2 bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73] shrink-0"
+        className={`relative px-2 pt-2 shrink-0 ${imagenFondo ? 'bg-transparent' : 'bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73]'}`}
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
         {(replyTo || editingMsg) && (
@@ -2419,6 +2441,8 @@ export const ChatPage: React.FC = () => {
           }}
         />
       )}
+
+      {fondoOpen && <FondoChat onCerrar={() => setFondoOpen(false)} />}
 
       {vaciarOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" onClick={() => !vaciando && setVaciarOpen(false)}>
