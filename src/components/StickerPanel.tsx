@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Plus, ClipboardPaste, Sticker as IconoSticker, Trash2, Loader2 } from 'lucide-react';
+import { X, Image as IconoFotos, FolderOpen, ClipboardPaste, Sticker as IconoSticker, Trash2, Loader2 } from 'lucide-react';
 import {
   agregarSticker,
   alCambiarColeccion,
@@ -67,7 +67,8 @@ export const StickerPanel: React.FC<{
   const [editando, setEditando] = useState(false);
   const [agregando, setAgregando] = useState<{ hechos: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const archivoRef = useRef<HTMLInputElement>(null);
+  const archivoRef = useRef<HTMLInputElement>(null); // Fotos (galería)
+  const carpetaRef = useRef<HTMLInputElement>(null); // Archivos (almacenamiento interno)
 
   useEffect(() => {
     const quitar = alCambiarColeccion(() => setLista(coleccionEnMemoria(userId)));
@@ -155,7 +156,18 @@ export const StickerPanel: React.FC<{
               archivoRef.current?.click();
             }}
           >
-            <Plus className="w-4 h-4" strokeWidth={2} /> Agregar
+            <IconoFotos className="w-4 h-4" strokeWidth={2} /> Fotos
+          </button>
+          <button
+            type="button"
+            className={boton}
+            disabled={!!agregando}
+            onClick={() => {
+              avisarSelectorArchivo();
+              carpetaRef.current?.click();
+            }}
+          >
+            <FolderOpen className="w-4 h-4" strokeWidth={2} /> Archivos
           </button>
           {'clipboard' in navigator && 'read' in navigator.clipboard && (
             <button type="button" className={boton} disabled={!!agregando} onClick={pegar}>
@@ -201,9 +213,11 @@ export const StickerPanel: React.FC<{
                   toca <b>Pegar</b>. También puedes guardar los que te envíen: mantén presionado el sticker en el chat.
                 </p>
               ) : (
-                <p className="text-xs font-['Inter'] leading-relaxed">
-                  Toca <b>Agregar</b> y busca la carpeta <b>WhatsApp Stickers</b> (en Android/media/com.whatsapp/WhatsApp/Media).
-                  Puedes elegir varios a la vez.
+                <p className="text-xs font-['Inter'] leading-relaxed text-left">
+                  Toca <b>Archivos</b>, abre el menú <b>☰</b> y elige el <b>almacenamiento interno</b> (el nombre de tu celular). Luego
+                  entra a <b>Android → media → com.whatsapp → WhatsApp → Media → WhatsApp Stickers</b> y elige los que quieras (puedes
+                  marcar varios dejando presionado). Si no ves el almacenamiento interno, toca <b>⋮</b> y luego{' '}
+                  <b>«Mostrar almacenamiento interno»</b>.
                 </p>
               )}
             </div>
@@ -216,10 +230,23 @@ export const StickerPanel: React.FC<{
           )}
         </div>
 
+        {/* Al pedir "archivos" (no solo imágenes), Android abre el administrador de archivos con carpetas */}
+        <input
+          ref={carpetaRef}
+          type="file"
+          accept="image/*,application/octet-stream,.webp,.gif,.png,.jpg,.jpeg"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const fs = Array.from(e.target.files ?? []).slice(0, 50);
+            e.target.value = '';
+            agregarVarios(fs);
+          }}
+        />
         <input
           ref={archivoRef}
           type="file"
-          accept="image/webp,image/png,image/gif,image/jpeg,image/*"
+          accept="image/*"
           multiple
           className="hidden"
           onChange={(e) => {
