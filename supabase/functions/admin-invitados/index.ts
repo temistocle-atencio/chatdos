@@ -4,6 +4,7 @@
 //   { accion: "cambiar_clave", invitado_id, clave }  -> cambia la contraseña de un invitado
 //   { accion: "eliminar", invitado_id }              -> borra al invitado, su chat y sus archivos
 //   { accion: "cambiar_usuario", invitado_id, usuario } -> cambia el usuario de un invitado
+//   { accion: "vaciar_chat", invitado_id }           -> borra todos los mensajes y archivos del chat (para los dos)
 // Cualquier persona con sesión (no hace falta ser administrador):
 //   { accion: "mi_usuario", usuario }                -> cambia su propio usuario
 // La clave service_role solo vive aquí, en el servidor de Supabase. Nunca en la app.
@@ -140,9 +141,8 @@ Deno.serve(async (req) => {
       return responder({ ok: true });
     }
 
-    // ---------- ELIMINAR ----------
-    if (accion === 'eliminar') {
-      // Archivos del chat: media/<chat_id>/<user_id>/...
+    // Archivos del chat: media/<chat_id>/<user_id>/...
+    const borrarArchivosDelChat = async () => {
       const { data: carpetas } = await servicio.storage.from('media').list(chatId, { limit: 100 });
       for (const carpeta of carpetas ?? []) {
         const ruta = `${chatId}/${carpeta.name}`;
@@ -152,6 +152,19 @@ Deno.serve(async (req) => {
           archivos = await servicio.storage.from('media').list(ruta, { limit: 1000 });
         }
       }
+    };
+
+    // ---------- VACIAR CHAT PARA LOS DOS ----------
+    if (accion === 'vaciar_chat') {
+      await borrarArchivosDelChat();
+      const { error } = await servicio.from('messages').delete().eq('chat_id', chatId); // reacciones en cascada
+      if (error) return responder({ error: 'No se pudo vaciar el chat' }, 500);
+      return responder({ ok: true });
+    }
+
+    // ---------- ELIMINAR ----------
+    if (accion === 'eliminar') {
+      await borrarArchivosDelChat();
       // Foto de perfil y fondo del invitado
       const { data: fotos } = await servicio.storage.from('profile').list(invitadoId);
       if ((fotos ?? []).length > 0) {

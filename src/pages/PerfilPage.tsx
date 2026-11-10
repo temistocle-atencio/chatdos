@@ -14,6 +14,7 @@ import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { MiCuenta } from '../components/MiCuenta';
+import { MiNota } from '../components/MiNota';
 
 export const PerfilPage: React.FC = () => {
   const { user, profile, refreshProfile, signOut } = useAuth();
@@ -270,6 +271,8 @@ export const PerfilPage: React.FC = () => {
           </button>
         </div>
       </form>
+
+      <MiNota />
 
       <MiCuenta />
 

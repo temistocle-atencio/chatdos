@@ -84,6 +84,16 @@ export const guardarMensajes = (rows: DbMessage[]) =>
 export const borrarMensajeLocal = (id: string) =>
   seguro(async () => void (await pedir((await tienda('messages', 'readwrite')).delete(id))), undefined);
 
+/** Borra del celular los mensajes de un chat que ya no existen en el servidor (vaciados o borrados). */
+export const borrarMensajesLocalesExcepto = (chatId: string, conservar: Set<string>, desde?: string) =>
+  seguro(async () => {
+    const s = await tienda('messages', 'readwrite');
+    const todos = (await pedir(s.index('chat').getAll(chatId))) as DbMessage[];
+    todos.forEach((m) => {
+      if (!conservar.has(m.id) && (!desde || m.created_at >= desde)) s.delete(m.id);
+    });
+  }, undefined);
+
 /** Últimos mensajes guardados de un chat (del más viejo al más nuevo). Recorta los muy viejos. */
 export const leerMensajes = (chatId: string, limite = 50) =>
   seguro(async () => {

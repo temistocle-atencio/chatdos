@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { conectarEnLinea, useEnLinea } from '../lib/enLinea';
+import { cargarNotas, escucharNotas, useNotaDelChat } from '../lib/notas';
 import { getLocalPrivateKey, getChatKey, decryptJSON } from '../lib/crypto';
 import { formatChatListTime } from '../lib/formatters';
 import type { ChatItem, Profile } from '../types/database';
@@ -24,8 +25,9 @@ interface ChatItemWithPreview extends ChatItem {
 }
 
 // Foto con el puntico verde cuando la otra persona tiene la app abierta (tocar = ver la foto)
-const AvatarLista: React.FC<{ partner: Profile; onVer: () => void }> = ({ partner, onVer }) => {
+const AvatarLista: React.FC<{ partner: Profile; chatId: string; onVer: () => void }> = ({ partner, chatId, onVer }) => {
   const enLinea = useEnLinea(partner.id);
+  const nota = useNotaDelChat(chatId);
   return (
     <button
       type="button"
@@ -37,6 +39,11 @@ const AvatarLista: React.FC<{ partner: Profile; onVer: () => void }> = ({ partne
       aria-label={`Ver foto de ${partner.display_name || partner.username}`}
     >
       <AvatarImage avatarPath={partner.avatar_path} name={partner.display_name || partner.username} size={46} />
+      {nota && (
+        <span className="absolute -top-3 -left-1 max-w-[76px] px-1.5 py-0.5 rounded-[10px] bg-white dark:bg-[#1F2933] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_1px_4px_rgba(0,0,0,0.15)] text-[10px] leading-tight font-['Inter'] text-[#1F2933] dark:text-white truncate z-10">
+          {nota.texto}
+        </span>
+      )}
       {enLinea && (
         <span
           className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#25D366] border-2 border-white dark:border-[#253240]"
@@ -103,6 +110,17 @@ export const ChatsPage: React.FC = () => {
   useEffect(() => {
     if (user && idsChats) conectarEnLinea(user.id, idsChats.split(','));
   }, [user, idsChats]);
+  // Notas de las otras personas (cifradas: se leen aquí con la llave de cada chat)
+  const llavesChats = chats.map((c) => `${c.chat_id}:${c.partner.id}:${c.partner.public_key ? 1 : 0}`).join(',');
+  useEffect(() => {
+    if (!user || !llavesChats) return;
+    const lista = chats
+      .filter((c) => c.partner.public_key)
+      .map((c) => ({ chatId: c.chat_id, partnerId: c.partner.id, publica: c.partner.public_key }));
+    cargarNotas(user.id, lista);
+    return escucharNotas(user.id, lista);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, llavesChats]);
   const [loading, setLoading] = useState(!enMemoria); // solo la primera vez, si no hay nada guardado
   const [actualizando, setActualizando] = useState(false); // solo cuando la persona toca "actualizar"
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -326,7 +344,7 @@ export const ChatsPage: React.FC = () => {
                 }}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <AvatarLista partner={item.partner} onVer={() => setFotoDe(item.partner)} />
+                  <AvatarLista partner={item.partner} chatId={item.chat_id} onVer={() => setFotoDe(item.partner)} />
                   <div className="min-w-0 flex-1 pr-2">
                     <div className="flex items-center justify-between gap-1">
                       <h4 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white truncate">

@@ -30,11 +30,13 @@ import {
   Lock,
   ChevronUp,
   ChevronLeft as FlechaIzq,
+  Eraser,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import {
   guardarChat,
   guardarMensajes,
+  borrarMensajesLocalesExcepto,
   borrarMensajeLocal,
   leerBandeja,
   leerChat,
@@ -47,6 +49,7 @@ import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { conectarEnLinea, useEnLinea } from '../lib/enLinea';
+import { cargarNotas, escucharNotas, useNotaDelChat } from '../lib/notas';
 import { StickerEditor } from '../components/StickerEditor';
 import { agregarSticker, blobSticker, marcarUsado, type Sticker } from '../lib/stickers';
 import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, textoSilencio } from '../lib/mute';
@@ -145,6 +148,20 @@ export const ChatPage: React.FC = () => {
   const enLineaGlobal = useEnLinea(partner?.id);
   const partnerEnLinea = isPartnerOnline || enLineaGlobal;
   const [verFotoPerfil, setVerFotoPerfil] = useState(false);
+  const [vaciarOpen, setVaciarOpen] = useState(false);
+  const limpiarPantallaRef = useRef<() => void>(() => {});
+  const [vaciando, setVaciando] = useState(false);
+  // Nota de la otra persona (burbujita junto a su foto; se esconde al subir a leer)
+  const notaPartner = useNotaDelChat(chatId);
+  const [alFinal, setAlFinal] = useState(true);
+  const partnerId = partner?.id;
+  const partnerLlave = partner?.public_key ? JSON.stringify(partner.public_key) : '';
+  useEffect(() => {
+    if (!user || !chatId || !partnerId || !partnerLlave) return;
+    const c = [{ chatId, partnerId, publica: JSON.parse(partnerLlave) }];
+    cargarNotas(user.id, c);
+    return escucharNotas(user.id, c);
+  }, [user, chatId, partnerId, partnerLlave]);
   const cerrarFoto = useCallback(() => setVerFotoPerfil(false), []);
   useEffect(() => {
     if (user && chatId) conectarEnLinea(user.id, [chatId]);
@@ -517,6 +534,12 @@ export const ChatPage: React.FC = () => {
         if (rawList.length === 50) {
           if (isMounted) setHasMoreOlder(true);
         }
+        // Lo que ya no está en el servidor (chat vaciado, borrado) se quita del celular
+        borrarMensajesLocalesExcepto(
+          chatId,
+          new Set(rawList.map((m) => m.id)),
+          rawList.length === 50 ? rawList[rawList.length - 1]?.created_at : undefined
+        );
         guardarMensajes(rawList);
 
         const decryptedList = await Promise.all(
@@ -749,6 +772,11 @@ export const ChatPage: React.FC = () => {
             setIsPartnerOnline(false);
           }
         });
+
+      // La otra persona vació el chat para los dos
+      channel.on('broadcast', { event: 'chat_vaciado' }, () => {
+        if (isMounted) limpiarPantallaRef.current();
+      });
 
       // Escuchar broadcast 'typing'
       channel.on('broadcast', { event: 'typing' }, (eventPayload) => {
@@ -1593,9 +1621,29 @@ export const ChatPage: React.FC = () => {
   useEffect(() => () => recorderRef.current?.cancel(), []);
 
   // ----- Ver una vez -----
+  // Se marca como visto y se borra del servidor EN CUANTO se abre (como WhatsApp):
+  // aunque se salga de la app sin cerrar la foto, ya no se puede volver a abrir.
+  const quemarVerUnaVez = async (msg: DecryptedMessage) => {
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, viewed_at: new Date().toISOString() } : m)));
+    {
+      // En el celular se guarda solo lo cifrado (sin el contenido descifrado)
+      const { payload: _p, decryptionError: _d, isPending: _i, ...fila } = msg as DecryptedMessage & Record<string, unknown>;
+      void _p; void _d; void _i;
+      guardarMensajes([{ ...(fila as unknown as DbMessage), viewed_at: new Date().toISOString() }]);
+    }
+    const { data: path, error } = await supabase.rpc('mark_viewed_once', { p_message: msg.id });
+    if (error) console.error('[ChatDos] mark_viewed_once', error);
+    const toRemove = (path as string | null) || msg.media_path;
+    if (toRemove) {
+      olvidarArchivoGuardado(toRemove);
+      const { error: rmErr } = await supabase.storage.from('media').remove([toRemove]);
+      if (rmErr) console.error('[ChatDos] borrar ver una vez', rmErr);
+    }
+  };
+
   const openViewOnce = async (msg: DecryptedMessage) => {
     const media = msg.payload?.media;
-    if (!media?.key || !msg.media_path) return;
+    if (!media?.key || !msg.media_path || msg.viewed_at) return;
     setViewer({ kind: msg.kind as 'image' | 'video' | 'audio', viewOnceMsg: msg, loading: true });
     try {
       const url = await downloadDecrypted(msg.id, msg.media_path, media.key, media.mime, false);
@@ -1604,27 +1652,56 @@ export const ChatPage: React.FC = () => {
       setViewer(null);
       setToast('Este archivo ya no está disponible');
     }
+    // Abierto (o ya no existía): queda gastado para siempre
+    await quemarVerUnaVez(msg);
   };
 
-  const closeViewer = async () => {
+  const closeViewer = () => {
     const v = viewer;
     setViewer(null);
-    if (!v?.viewOnceMsg) return;
-    if (v.url) URL.revokeObjectURL(v.url);
-    const msg = v.viewOnceMsg;
-    // Marcar como visto y borrar el archivo para siempre
-    const { data: path, error } = await supabase.rpc('mark_viewed_once', { p_message: msg.id });
-    if (error) {
-      console.error('[ChatDos] mark_viewed_once', error);
-    }
-    const toRemove = (path as string | null) || msg.media_path;
-    if (toRemove) {
-      olvidarArchivoGuardado(toRemove);
-      const { error: rmErr } = await supabase.storage.from('media').remove([toRemove]);
-      if (rmErr) console.error('[ChatDos] borrar ver una vez', rmErr);
-    }
-    setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, viewed_at: new Date().toISOString() } : m)));
+    if (v?.viewOnceMsg && v.url) URL.revokeObjectURL(v.url);
   };
+
+  // ----- Vaciar chat -----
+  const limpiarPantallaDelChat = () => {
+    if (!chatId) return;
+    messagesRef.current.forEach((m) => {
+      forgetUrl(m.id);
+      if (m.media_path) olvidarArchivoGuardado(m.media_path);
+    });
+    setMessages((prev) => prev.filter((m) => m.chat_id !== chatId || m.isPending));
+    memoria.mensajes.delete(chatId);
+    borrarMensajesLocalesExcepto(chatId, new Set());
+    setHasMoreOlder(false);
+    setReplyTo(null);
+  };
+
+  const vaciarChat = async (paraLosDos: boolean) => {
+    if (!chatId || !partner) return;
+    setVaciando(true);
+    try {
+      if (paraLosDos) {
+        const { data, error } = await supabase.functions.invoke('admin-invitados', {
+          body: { accion: 'vaciar_chat', invitado_id: partner.id },
+        });
+        if (error || data?.error) throw new Error(data?.error || 'No se pudo vaciar el chat');
+        // Avisar a la otra persona para que su pantalla también quede vacía
+        activeChannelRef.current?.send({ type: 'broadcast', event: 'chat_vaciado', payload: {} });
+      } else {
+        const { error } = await supabase.rpc('vaciar_chat_para_mi', { p_chat: chatId });
+        if (error) throw new Error('No se pudo vaciar el chat');
+      }
+      limpiarPantallaDelChat();
+      setVaciarOpen(false);
+      setToast(paraLosDos ? 'Chat vaciado para los dos' : 'Chat vaciado');
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'No se pudo vaciar el chat');
+    } finally {
+      setVaciando(false);
+    }
+  };
+
+  limpiarPantallaRef.current = limpiarPantallaDelChat;
 
   // Ir al mensaje original de una cita
   const goToMessage = (id: string) => {
@@ -1842,6 +1919,17 @@ export const ChatPage: React.FC = () => {
                 <button
                   onClick={() => {
                     setHeaderMenuOpen(false);
+                    setVaciarOpen(true);
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#B03030] dark:text-[#FDEBD3] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                >
+                  <Eraser className="w-4 h-4" strokeWidth={2} />
+                  <span>Vaciar chat</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
                     navigate('/perfil');
                   }}
                   className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
@@ -1880,6 +1968,22 @@ export const ChatPage: React.FC = () => {
         </div>
       </header>
 
+      {/* Nota de la otra persona: burbujita bajo su foto (como WhatsApp) */}
+      {notaPartner && (
+        <div
+          className={`absolute z-20 left-[52px] max-w-[70%] transition-all duration-300 ${
+            alFinal ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1 pointer-events-none'
+          }`}
+          style={{ top: 'calc(3.5rem + env(safe-area-inset-top) + 6px)' }}
+          aria-label={`Nota de ${partnerName}: ${notaPartner.texto}`}
+        >
+          <span className="absolute -top-1.5 left-4 w-3 h-3 rotate-45 bg-white dark:bg-[#253240] border-l border-t border-[#E3E7EC] dark:border-[#003A73]" aria-hidden="true" />
+          <div className="relative px-3 py-1.5 rounded-[16px] bg-white dark:bg-[#253240] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_2px_8px_rgba(0,0,0,0.12)] text-[13px] font-['Inter'] text-[#1F2933] dark:text-white truncate">
+            {notaPartner.texto}
+          </div>
+        </div>
+      )}
+
       {/* Alerta si la llave de la otra persona cambió */}
       {keyChangedAlert && (
         <div className="p-2.5 bg-[#FDEBD3] text-[#8A4B00] text-xs font-['Inter'] flex items-start gap-2 leading-relaxed shrink-0">
@@ -1910,6 +2014,11 @@ export const ChatPage: React.FC = () => {
         /* Contenedor de mensajes con scroll */
         <div
           ref={scrollContainerRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            const abajo = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
+            if (abajo !== alFinal) setAlFinal(abajo);
+          }}
           className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-1 pb-3 flex flex-col"
         >
           {hasMoreOlder && (
@@ -2309,6 +2418,52 @@ export const ChatPage: React.FC = () => {
             audioInputRef.current?.click();
           }}
         />
+      )}
+
+      {vaciarOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4" onClick={() => !vaciando && setVaciarOpen(false)}>
+          <div
+            className="w-full max-w-sm bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] p-5"
+            style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-['Poppins'] font-semibold text-base text-[#003A73] dark:text-white mb-1">¿Vaciar este chat?</h3>
+            <p className="text-sm font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] mb-4 leading-relaxed">
+              Se quitan todos los mensajes, fotos, videos y audios.{' '}
+              {isAdmin
+                ? `«Solo para mí» los quita de tu pantalla y ${partnerName} los sigue viendo. «Para los dos» los borra para siempre.`
+                : `${partnerName} los seguirá viendo.`}
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={vaciando}
+                onClick={() => vaciarChat(false)}
+                className="w-full h-11 rounded-[5px] bg-[#B03030] text-white font-['Poppins'] font-semibold text-sm disabled:opacity-60"
+              >
+                {vaciando ? 'Vaciando…' : isAdmin ? 'Vaciar solo para mí' : 'Vaciar chat'}
+              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  disabled={vaciando}
+                  onClick={() => vaciarChat(true)}
+                  className="w-full h-11 rounded-[5px] border border-[#B03030] text-[#B03030] dark:text-[#FDEBD3] dark:border-[#FDEBD3] font-['Poppins'] font-semibold text-sm disabled:opacity-60"
+                >
+                  Vaciar para los dos (no se puede deshacer)
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={vaciando}
+                onClick={() => setVaciarOpen(false)}
+                className="w-full h-11 rounded-[5px] text-[#5B6670] dark:text-[#E3E7EC] font-['Poppins'] font-semibold text-sm"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {verFotoPerfil && partner && (
