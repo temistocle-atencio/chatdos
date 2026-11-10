@@ -13,6 +13,7 @@ export interface PendingMedia {
   thumb?: string;
   name?: string;
   music?: boolean;
+  sticker?: boolean;
 }
 
 // Menú para elegir qué adjuntar

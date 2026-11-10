@@ -39,6 +39,7 @@ async function vistaPrevia(
     }
     const payload = await decryptJSON<MessagePayload>(cKey, msg.ciphertext, msg.iv);
     const kindName = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' }[msg.kind];
+    if (payload.media?.sticker) return 'Sticker';
     return msg.view_once ? `${kindName} · ver una vez` : payload.text || (payload.media?.music ? 'Música' : kindName) || '';
   } catch {
     return 'Mensaje cifrado';

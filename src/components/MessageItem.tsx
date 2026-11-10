@@ -208,6 +208,18 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
     const text = message.payload?.text || '';
 
+    // Sticker: la imagen sola y la hora en una etiquetita
+    if (media && esSticker) {
+      return (
+        <>
+          {media}
+          <div className={`flex ${isMine ? 'justify-end' : 'justify-start'} mt-0.5`}>
+            <span className="inline-flex items-center px-1.5 pb-[5px] rounded-[8px] bg-[#1F2933]/55 [&_*]:!text-white">{metadata}</span>
+          </div>
+        </>
+      );
+    }
+
     // Foto, video o audio: el archivo y debajo el texto (si tiene) con la hora
     if (media) {
       return (
@@ -268,8 +280,13 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   }, {});
   const groupedEntries = Object.entries(grouped);
 
+  // Los stickers van sin burbuja, como en WhatsApp
+  const esSticker = !isDeleted && !message.decryptionError && !!message.payload?.media?.sticker && !message.view_once;
+
   // Colores de la burbuja (también los usa la colita)
-  const bubbleColor = isMine
+  const bubbleColor = esSticker
+    ? 'bg-transparent text-[#1F2933] dark:text-white'
+    : isMine
     ? 'bg-[#005198] text-[#FFFFFF]'
     : 'bg-white dark:bg-[#003A73] text-[#1F2933] dark:text-[#FFFFFF]';
   const tailColor = isMine ? 'text-[#005198]' : 'text-white dark:text-[#003A73]';
@@ -290,7 +307,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           transition: swipeX ? 'none' : 'transform 150ms ease-out',
           WebkitTouchCallout: 'none',
         }}
-        className={`group relative max-w-[85%] px-2 pt-1.5 pb-2 rounded-[5px] shadow-[0_1px_2px_rgba(0,0,0,0.12)] select-none md:select-text ${bubbleColor} ${
+        className={`group relative max-w-[85%] ${esSticker ? 'p-0' : 'px-2 pt-1.5 pb-2 rounded-[5px] shadow-[0_1px_2px_rgba(0,0,0,0.12)]'} select-none md:select-text ${bubbleColor} ${
           isFirstInGroup ? (isMine ? 'rounded-tr-none' : 'rounded-tl-none') : ''
         } ${highlighted ? 'outline outline-2 outline-[#005198] dark:outline-white' : ''}`}
       >
@@ -306,7 +323,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         )}
 
         {/* Colita de la burbuja (solo el primer mensaje del grupo) */}
-        {isFirstInGroup && (
+        {isFirstInGroup && !esSticker && (
           <svg
             viewBox="0 0 8 13"
             width="8"

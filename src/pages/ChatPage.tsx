@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   Send,
   Smile,
+  Sticker as IconoSticker,
   RefreshCw,
   ShieldCheck,
   ShieldAlert,
@@ -39,6 +40,8 @@ import {
   type Pendiente,
 } from '../lib/offline';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
+import { StickerPanel } from '../components/StickerPanel';
+import { agregarSticker, blobSticker, marcarUsado, type Sticker } from '../lib/stickers';
 import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, textoSilencio } from '../lib/mute';
 import { clearChatNotifications, notifyPartner, playIncoming, updateBadge } from '../lib/push';
 import { useAuth } from '../context/AuthContext';
@@ -61,6 +64,7 @@ import {
   cacheLocalUrl,
   forgetUrl,
   downloadDecrypted,
+  getCachedUrl,
   formatDuration,
   olvidarArchivoGuardado,
 } from '../lib/media';
@@ -89,7 +93,7 @@ const shortText = (m: DecryptedMessage): string => {
   if (m.deleted_for_all) return 'Mensaje eliminado';
   const t = (m.payload?.text || '').replace(/\s+/g, ' ').trim();
   if (t) return t.length > 120 ? t.slice(0, 120) + '…' : t;
-  if (m.kind === 'image') return 'Foto';
+  if (m.kind === 'image') return m.payload?.media?.sticker ? 'Sticker' : 'Foto';
   if (m.kind === 'video') return 'Video';
   if (m.kind === 'audio') return 'Audio';
   return 'Mensaje';
@@ -160,6 +164,9 @@ export const ChatPage: React.FC = () => {
   const [confirmDeleteAll, setConfirmDeleteAll] = useState<DecryptedMessage | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // Stickers
+  const [stickersOpen, setStickersOpen] = useState(false);
+  const [pegada, setPegada] = useState<Blob | null>(null); // imagen pegada en el campo de texto
   // Silenciar chat
   const [silencio, setSilencio] = useState<string | null>(null);
   const [silencioOpen, setSilencioOpen] = useState(false);
@@ -1324,9 +1331,10 @@ export const ChatPage: React.FC = () => {
         height: media.height,
         duration: media.duration,
         // En "ver una vez" no va miniatura (se vería la foto sin abrirla)
-        thumb: viewOnce ? undefined : media.thumb,
+        thumb: viewOnce || media.sticker ? undefined : media.thumb,
         name: media.name,
         music: media.music,
+        ...(media.sticker ? { sticker: true } : {}),
       },
     };
     // Quien envía ve su propio archivo sin bajarlo (excepto "ver una vez")
@@ -1376,6 +1384,61 @@ export const ChatPage: React.FC = () => {
       .filter((x): x is () => Promise<void> => !!x);
     setPendingMedia(null);
     for (const subir of subidas) await subir();
+  };
+
+  // ----- Stickers -----
+  const enviarSticker = async (st: Sticker) => {
+    setStickersOpen(false);
+    if (!user) return;
+    try {
+      const blob = await blobSticker(st);
+      sendMedia({ kind: 'image', blob, mime: st.meta.mime, width: st.meta.w, height: st.meta.h, sticker: true }, '', false);
+      marcarUsado(user.id, st);
+    } catch {
+      setToast('No se pudo enviar el sticker');
+    }
+  };
+
+  // Guardar en mi colección un sticker o una foto que está en el chat
+  const guardarComoSticker = async (msg: DecryptedMessage) => {
+    setActionMsg(null);
+    const media = msg.payload?.media;
+    if (!user || !media || !msg.media_path) return;
+    try {
+      const url = getCachedUrl(msg.id) || (await downloadDecrypted(msg.id, msg.media_path, media.key, media.mime));
+      const blob = await (await fetch(url)).blob();
+      const r = await agregarSticker(user.id, myProfile?.public_key, blob);
+      setToast(r.nuevo ? 'Guardado en tus stickers' : 'Ya estaba en tus stickers');
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'No se pudo guardar el sticker');
+    }
+  };
+
+  // Pegar una imagen en el campo de texto (por ejemplo, copiada desde Fotos en iPhone)
+  const alPegar = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.kind === 'file' && i.type.startsWith('image/'));
+    const file = item?.getAsFile();
+    if (!file) return; // texto normal: se pega como siempre
+    e.preventDefault();
+    setPegada(file);
+  };
+
+  const enviarPegadaComoSticker = async (guardar: boolean) => {
+    const blob = pegada;
+    setPegada(null);
+    if (!blob || !user) return;
+    try {
+      if (guardar) {
+        const { sticker } = await agregarSticker(user.id, myProfile?.public_key, blob);
+        await enviarSticker(sticker);
+      } else {
+        const { prepararSticker } = await import('../lib/stickers');
+        const p = await prepararSticker(blob);
+        sendMedia({ kind: 'image', blob: p.blob, mime: p.meta.mime, width: p.meta.w, height: p.meta.h, sticker: true }, '', false);
+      }
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'No se pudo enviar');
+    }
   };
 
   const retryUpload = (messageId: string) => {
@@ -1936,8 +1999,23 @@ export const ChatPage: React.FC = () => {
                     : 'Esperando a que la otra persona active su llave...'
                 }
                 disabled={!hasPartnerKey}
+                onPaste={alPegar}
                 className="flex-1 max-h-28 py-1.5 px-2 bg-transparent text-[16px] md:text-sm font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#E3E7EC] resize-none focus:outline-none"
               />
+
+              {/* Stickers */}
+              {!editingMsg && !inputText.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setStickersOpen(true)}
+                  disabled={!hasPartnerKey}
+                  className="p-2 text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white rounded-[5px] transition-colors shrink-0 disabled:opacity-40"
+                  title="Stickers"
+                  aria-label="Stickers"
+                >
+                  <IconoSticker className="w-5 h-5" strokeWidth={2} />
+                </button>
+              )}
 
               {/* Adjuntar foto, video o audio */}
               {!editingMsg && (
@@ -2050,6 +2128,57 @@ export const ChatPage: React.FC = () => {
         />
       )}
 
+      {stickersOpen && user && (
+        <StickerPanel
+          userId={user.id}
+          miLlavePublica={myProfile?.public_key}
+          onEnviar={enviarSticker}
+          onCerrar={() => setStickersOpen(false)}
+          onAviso={setToast}
+        />
+      )}
+
+      {pegada && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPegada(null)}>
+          <div
+            className="w-full max-w-sm bg-white dark:bg-[#253240] rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-['Poppins'] font-semibold text-base text-[#003A73] dark:text-white mb-3">Imagen pegada</h3>
+            <div className="h-36 flex items-center justify-center mb-4 rounded-[5px] bg-[#F2F4F7] dark:bg-[#1F2933]">
+              <img src={URL.createObjectURL(pegada)} alt="" className="max-h-32 max-w-full object-contain" />
+            </div>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => enviarPegadaComoSticker(true)}
+                className="h-11 rounded-[5px] bg-[#F28C1B] text-[#1F2933] font-['Poppins'] font-semibold text-sm"
+              >
+                Enviar sticker y guardarlo
+              </button>
+              <button
+                type="button"
+                onClick={() => enviarPegadaComoSticker(false)}
+                className="h-11 rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] text-[#005198] dark:text-white font-['Poppins'] font-semibold text-sm"
+              >
+                Enviar sticker sin guardar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const b = pegada;
+                  setPegada(null);
+                  if (b) handleFilePicked([new File([b], 'pegada.png', { type: b.type || 'image/png' })]);
+                }}
+                className="h-10 text-sm font-['Poppins'] font-semibold text-[#5B6670] dark:text-[#E3E7EC]"
+              >
+                Enviar como foto
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingMedia && (
         <MediaComposer
           medias={pendingMedia}
@@ -2085,6 +2214,11 @@ export const ChatPage: React.FC = () => {
           onCopy={() => copyText(actionMsg)}
           onEdit={() => startEdit(actionMsg)}
           onDeleteForMe={() => deleteForMe(actionMsg)}
+          onSaveSticker={
+            actionMsg.kind === 'image' && !actionMsg.view_once && !actionMsg.deleted_for_all && !actionMsg.decryptionError
+              ? () => guardarComoSticker(actionMsg)
+              : undefined
+          }
           onDeleteForAll={() => {
             setConfirmDeleteAll(actionMsg);
             setActionMsg(null);

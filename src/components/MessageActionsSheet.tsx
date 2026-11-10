@@ -1,5 +1,5 @@
 import React from 'react';
-import { Reply, Copy, Pencil, Trash2, EyeOff, Plus, X } from 'lucide-react';
+import { Reply, Copy, Pencil, Trash2, EyeOff, Plus, X, Sticker } from 'lucide-react';
 import type { DecryptedMessage } from '../types/chat';
 
 // Reacciones rápidas, como en WhatsApp
@@ -20,6 +20,7 @@ interface MessageActionsSheetProps {
   onEdit: () => void;
   onDeleteForMe: () => void;
   onDeleteForAll: () => void;
+  onSaveSticker?: () => void;
 }
 
 export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
@@ -34,6 +35,7 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
   onEdit,
   onDeleteForMe,
   onDeleteForAll,
+  onSaveSticker,
 }) => {
   const isDeleted = message.deleted_for_all;
   const hasText = !!message.payload?.text && !message.decryptionError;
@@ -114,6 +116,12 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
           {!isDeleted && item(<Reply className="w-5 h-5" strokeWidth={2} />, 'Responder', onReply)}
           {hasText && !isDeleted && item(<Copy className="w-5 h-5" strokeWidth={2} />, 'Copiar texto', onCopy)}
           {canEdit && item(<Pencil className="w-5 h-5" strokeWidth={2} />, 'Editar', onEdit)}
+          {onSaveSticker &&
+            item(
+              <Sticker className="w-5 h-5" strokeWidth={2} />,
+              message.payload?.media?.sticker ? 'Guardar en mis stickers' : 'Guardar como sticker',
+              onSaveSticker
+            )}
           {item(<EyeOff className="w-5 h-5" strokeWidth={2} />, 'Eliminar para mí', onDeleteForMe)}
           {isMine && !isDeleted && !message.isPending &&
             item(<Trash2 className="w-5 h-5" strokeWidth={2} />, 'Eliminar para todos', onDeleteForAll, true)}

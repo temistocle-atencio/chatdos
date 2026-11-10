@@ -27,6 +27,7 @@ export interface MessagePayload {
     thumb?: string;
     name?: string; // nombre del archivo (canciones)
     music?: boolean; // true = archivo de audio elegido del celular, false = nota de voz
+    sticker?: boolean; // se muestra sin burbuja, como sticker
   };
 }
 

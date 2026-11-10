@@ -144,6 +144,32 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
     );
   }
 
+  // ----- Sticker (sin burbuja ni fondo) -----
+  if (kind === 'image' && media?.sticker) {
+    const lado = 150;
+    const r = media.width && media.height ? media.width / media.height : 1;
+    const style = r >= 1 ? { width: lado, height: lado / r } : { width: lado * r, height: lado };
+    return (
+      <div className="relative" style={style}>
+        {url ? (
+          <img src={url} alt="Sticker" className="w-full h-full object-contain" draggable={false} />
+        ) : error ? (
+          <button
+            type="button"
+            onClick={() => fetchUrl()}
+            className="w-full h-full flex flex-col items-center justify-center gap-1 text-[#5B6670] dark:text-[#E3E7EC] text-[11px] font-['Inter']"
+          >
+            <ImageIcon className="w-6 h-6" strokeWidth={2} />
+            Toca para reintentar
+          </button>
+        ) : (
+          <span className="block w-full h-full rounded-[8px] bg-[#E3E7EC]/60 dark:bg-[#253240]/60 animate-pulse" />
+        )}
+        {uploadOverlay}
+      </div>
+    );
+  }
+
   // ----- Foto -----
   if (kind === 'image') {
     const size = boxSize(media?.width, media?.height);

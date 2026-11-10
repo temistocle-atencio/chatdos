@@ -84,6 +84,17 @@ export default defineConfig(() => {
               },
             },
             {
+              // Stickers (cifrados): cada uno tiene su nombre propio, no cambian
+              urlPattern: /\/storage\/v1\/object\/(authenticated\/)?stickers\//,
+              handler: 'CacheFirst',
+              method: 'GET',
+              options: {
+                cacheName: 'chatdos-stickers',
+                expiration: { maxEntries: 400, maxAgeSeconds: 60 * 60 * 24 * 180 },
+                cacheableResponse: { statuses: [200] },
+              },
+            },
+            {
               // Fotos de perfil: se muestra la guardada y se actualiza por detrás
               urlPattern: /\/storage\/v1\/object\/(authenticated\/)?profile\//,
               handler: 'StaleWhileRevalidate',

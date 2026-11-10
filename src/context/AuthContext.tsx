@@ -5,6 +5,7 @@ import { safeMarkDelivered, safeTouchLastSeen } from '../lib/rpc';
 import type { Profile } from '../types/database';
 import { desactivarBloqueo } from '../lib/bloqueo';
 import { vaciarMemoria } from '../lib/memoria';
+import { vaciarStickers } from '../lib/stickers';
 import { borrarSesionLocal, borrarTodoLocal, guardarSesionLocal, leerSesionLocal } from '../lib/offline';
 
 // Sin internet: recuperar el usuario guardado por Supabase en el celular
@@ -277,6 +278,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       borrarSesionLocal();
       vaciarMemoria();
+      vaciarStickers();
       await borrarTodoLocal();
       setUser(null);
       setSession(null);
