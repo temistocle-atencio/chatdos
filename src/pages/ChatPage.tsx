@@ -87,7 +87,8 @@ import {
   getLocalPrivateKey,
   getChatKey,
   encryptJSON,
-  decryptJSON,
+  decryptJSONConRespaldo,
+  llavesAnterioresDelChat,
   computeSecurityNumber,
   checkPartnerKeyChange,
 } from '../lib/crypto';
@@ -137,6 +138,7 @@ export const ChatPage: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Llave criptográfica del chat
+  const llavesViejasRef = useRef<CryptoKey[]>([]);
   const [chatKey, setChatKey] = useState<CryptoKey | null>(() =>
     chatId && companeroMem?.public_key ? memoria.llaves.get(claveLlave(chatId, companeroMem.public_key)) ?? null : null
   );
@@ -315,6 +317,8 @@ export const ChatPage: React.FC = () => {
       if (isMounted) setKeyChangedAlert(hasChanged);
       const myPrivateKey = await getLocalPrivateKey(user.id);
       if (myPrivateKey) {
+        // Llaves viejas de la otra persona (si empezó de nuevo): para leer los mensajes de antes
+        llavesViejasRef.current = await llavesAnterioresDelChat(chatId, myPrivateKey, partnerProf.llaves_anteriores, user.id, partnerProf.public_key).catch(() => []);
         const k = claveLlave(chatId, partnerProf.public_key);
         const derived = memoria.llaves.get(k) ?? (await getChatKey(chatId, myPrivateKey, partnerProf.public_key as JsonWebKey));
         memoria.llaves.set(k, derived);
@@ -493,7 +497,7 @@ export const ChatPage: React.FC = () => {
         return { ...msg, decryptionError: true };
       }
       try {
-        const payload = await decryptJSON<MessagePayload>(key, msg.ciphertext, msg.iv);
+        const payload = await decryptJSONConRespaldo<MessagePayload>(key, llavesViejasRef.current, msg.ciphertext, msg.iv);
         return { ...msg, payload };
       } catch (err) {
         console.warn('[ChatDos] No se pudo descifrar el mensaje:', msg.id, err);

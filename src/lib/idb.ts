@@ -76,6 +76,39 @@ export async function saveLocalPrivateKey(userId: string, privateKey: CryptoKey)
   });
 }
 
+// Llaves privadas ANTERIORES de esta persona en este celular (si renovó su llave):
+// sirven para seguir leyendo aquí los mensajes de antes del cambio.
+export interface LlavePropiaAnterior {
+  privateKey: CryptoKey;
+  publicJwk: JsonWebKey;
+}
+
+export async function loadOwnOldKeys(userId: string): Promise<LlavePropiaAnterior[]> {
+  try {
+    const db = await openCryptoDb();
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction('keys', 'readonly').objectStore('keys').get(`${userId}:anteriores`);
+      request.onsuccess = () => resolve((request.result?.lista as LlavePropiaAnterior[]) ?? []);
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function addOwnOldKey(userId: string, llave: LlavePropiaAnterior): Promise<void> {
+  const lista = await loadOwnOldKeys(userId);
+  const db = await openCryptoDb();
+  return new Promise((resolve, reject) => {
+    const request = db
+      .transaction('keys', 'readwrite')
+      .objectStore('keys')
+      .put({ user_id: `${userId}:anteriores`, lista: [...lista, llave], updated_at: Date.now() });
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
 export async function clearLocalPrivateKey(userId: string): Promise<void> {
   try {
     const db = await openCryptoDb();

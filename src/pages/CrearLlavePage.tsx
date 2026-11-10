@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldAlert, KeyRound, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { compartirConAdmin, tomarAccesoPendiente } from '../lib/cuenta';
 import { generateAndBackupKeys } from '../lib/crypto';
 import { CampoClave } from '../components/CampoClave';
 
@@ -14,6 +13,7 @@ export const CrearLlavePage: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [anotada, setAnotada] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,14 +31,15 @@ export const CrearLlavePage: React.FC = () => {
       return;
     }
 
+    if (!anotada) {
+      setErrorMsg('Marca la casilla cuando ya la tengas anotada en un lugar seguro.');
+      return;
+    }
+
     setLoading(true);
     try {
       // 1. Genera el par ECDH P-256, sube la pública a profiles y el respaldo a key_backups
       await generateAndBackupKeys(user.id, password);
-      if (!isAdmin) {
-        const acceso = tomarAccesoPendiente();
-        void compartirConAdmin(user.id, { ...(acceso ?? {}), respaldo: password });
-      }
 
       // 2. Refresca el perfil para registrar que ya tiene public_key
       await refreshProfile();
@@ -87,7 +88,8 @@ export const CrearLlavePage: React.FC = () => {
           <ShieldAlert className="w-4 h-4 text-[#8A4B00] shrink-0 mt-0.5" strokeWidth={2} />
           <span>
             <strong>Advertencia fundamental:</strong> Esta contraseña es distinta a la de iniciar sesión y solo la conoces tú.
-            Si la olvidas, <strong>nadie podrá recuperar tus mensajes</strong> en un dispositivo nuevo.
+            Si la olvidas, <strong>nadie podrá recuperar tus mensajes</strong> en un dispositivo nuevo, ni siquiera el administrador.
+            Anótala en un lugar seguro.
           </span>
         </div>
 
@@ -124,6 +126,17 @@ export const CrearLlavePage: React.FC = () => {
               className="w-full h-11 px-3 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] bg-white dark:bg-[#1F2933] text-sm font-['Inter'] text-[#1F2933] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#005198] transition-all"
             />
           </div>
+
+          <label className="flex items-start gap-2 text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed cursor-pointer">
+            <input
+              type="checkbox"
+              checked={anotada}
+              onChange={(e) => setAnotada(e.target.checked)}
+              disabled={loading}
+              className="mt-0.5 w-4 h-4 accent-[#005198] shrink-0"
+            />
+            <span>Ya la anoté en un lugar seguro y sé que nadie me la puede recuperar.</span>
+          </label>
 
           {/* Único botón naranja de la pantalla según regla estricta de marca */}
           <button

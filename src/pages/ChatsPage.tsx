@@ -11,7 +11,7 @@ import { AvatarImage } from '../components/AvatarImage';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { conectarEnLinea, useEnLinea } from '../lib/enLinea';
 import { cargarNotas, escucharNotas, useNotaDelChat } from '../lib/notas';
-import { getLocalPrivateKey, getChatKey, decryptJSON } from '../lib/crypto';
+import { getLocalPrivateKey, getChatKey, decryptJSONConRespaldo, llavesAnterioresDelChat } from '../lib/crypto';
 import { formatChatListTime } from '../lib/formatters';
 import type { ChatItem, Profile } from '../types/database';
 import type { DbMessage, MessagePayload } from '../types/chat';
@@ -60,7 +60,8 @@ async function vistaPrevia(
   chatId: string,
   partner: Profile,
   msg: Pick<DbMessage, 'kind' | 'ciphertext' | 'iv' | 'view_once' | 'deleted_for_all'>,
-  myKey: CryptoKey | null
+  myKey: CryptoKey | null,
+  userId?: string
 ): Promise<string> {
   if (msg.deleted_for_all) return 'Se eliminó este mensaje';
   if (!myKey || !partner.public_key) return 'Mensaje cifrado';
@@ -71,7 +72,12 @@ async function vistaPrevia(
       cKey = await getChatKey(chatId, myKey, partner.public_key as JsonWebKey);
       memoria.llaves.set(k, cKey);
     }
-    const payload = await decryptJSON<MessagePayload>(cKey, msg.ciphertext, msg.iv);
+    const llaveActual = cKey;
+    const payload = await decryptJSONConRespaldo<MessagePayload>(llaveActual, [], msg.ciphertext, msg.iv).catch(async () => {
+      // Mensaje de antes de un cambio de llave: se prueba con las llaves anteriores
+      const viejas = await llavesAnterioresDelChat(chatId, myKey, partner.llaves_anteriores, userId, partner.public_key).catch(() => []);
+      return decryptJSONConRespaldo<MessagePayload>(llaveActual, viejas, msg.ciphertext, msg.iv);
+    });
     const kindName = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' }[msg.kind];
     if (payload.media?.sticker) return 'Sticker';
     return msg.view_once ? `${kindName} · ver una vez` : payload.text || (payload.media?.music ? 'Música' : kindName) || '';
@@ -177,7 +183,7 @@ export const ChatsPage: React.FC = () => {
             return {
               chat_id: f.chat_id,
               partner: f.partner,
-              lastMessageText: m ? await vistaPrevia(f.chat_id, f.partner, m, myKey) : '',
+              lastMessageText: m ? await vistaPrevia(f.chat_id, f.partner, m, myKey, user?.id) : '',
               lastMessageTime: m ? formatChatListTime(m.created_at) : '',
               lastAt: m?.created_at ?? '',
               unreadCount: f.unread || 0,
@@ -207,7 +213,7 @@ export const ChatsPage: React.FC = () => {
       const fila = chatsRef.current.find((c) => c.chat_id === msg.chat_id);
       if (!fila) return false;
       const myKey = await getLocalPrivateKey(user.id);
-      const texto = await vistaPrevia(msg.chat_id, fila.partner, msg, myKey);
+      const texto = await vistaPrevia(msg.chat_id, fila.partner, msg, myKey, user?.id);
       const actual = chatsRef.current.find((c) => c.chat_id === msg.chat_id);
       if (!actual) return false;
       mostrar(

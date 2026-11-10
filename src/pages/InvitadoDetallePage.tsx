@@ -9,18 +9,14 @@ import {
   Check,
   X,
   MessageSquare,
-  Eye,
-  EyeOff,
   Copy,
   Pencil,
-  Lock,
+  AtSign,
 } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import { cambiarUsuarioInvitado, guardarEnBoveda, leerBoveda, type DatosAcceso } from '../lib/cuenta';
+import { cambiarUsuarioInvitado, restablecerClaveInvitado } from '../lib/cuenta';
 import { supabase } from '../lib/supabase';
 import { AvatarImage } from '../components/AvatarImage';
 import type { Profile } from '../types/database';
-import { CampoClave } from '../components/CampoClave';
 import { leerApariencia, partirNombre, type Apariencia } from '../lib/nombreApp';
 import { Logo } from '../components/Logo';
 
@@ -36,14 +32,11 @@ export const InvitadoDetallePage: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Estados de cambio de contraseña
-  const [newPassword, setNewPassword] = useState('');
-  const [updatingPass, setUpdatingPass] = useState(false);
+  // Restablecer contraseña: el administrador nunca ve la de ella; solo una temporal, una vez
+  const [confirmarRestablecer, setConfirmarRestablecer] = useState(false);
+  const [restableciendo, setRestableciendo] = useState(false);
+  const [temporal, setTemporal] = useState<string | null>(null);
 
-  // Datos de acceso guardados cifrados (solo el administrador y el invitado pueden abrirlos)
-  const { user } = useAuth();
-  const [boveda, setBoveda] = useState<DatosAcceso | null | undefined>(undefined);
-  const [ver, setVer] = useState<{ contrasena: boolean; respaldo: boolean }>({ contrasena: false, respaldo: false });
   const [copiado, setCopiado] = useState<string | null>(null);
   const [editUsuario, setEditUsuario] = useState<string | null>(null);
   const [guardandoUsuario, setGuardandoUsuario] = useState(false);
@@ -93,33 +86,12 @@ export const InvitadoDetallePage: React.FC = () => {
     loadData();
   }, [id]);
 
-  useEffect(() => {
-    if (!user || !chatId || !profile?.public_key) return;
-    let vivo = true;
-    leerBoveda(user.id, chatId, profile.public_key)
-      .then((d) => vivo && setBoveda(d))
-      .catch(() => vivo && setBoveda(null));
-    return () => {
-      vivo = false;
-    };
-  }, [user, chatId, profile?.public_key]);
-
   // Icono y nombre que esta persona le puso a su app
   const [suApariencia, setSuApariencia] = useState<Apariencia | null | undefined>(undefined);
   useEffect(() => {
     if (!id) return;
     leerApariencia(id).then(setSuApariencia).catch(() => setSuApariencia(null));
   }, [id]);
-
-  const guardarCopia = async (cambios: DatosAcceso) => {
-    if (!user || !chatId || !profile?.public_key) return;
-    try {
-      await guardarEnBoveda(user.id, chatId, profile.public_key, cambios);
-      setBoveda((b) => ({ ...(b ?? {}), ...cambios }));
-    } catch (e) {
-      console.warn('[cuenta] no se pudo actualizar la copia cifrada', e);
-    }
-  };
 
   const copiar = async (texto: string, cual: string) => {
     try {
@@ -142,7 +114,6 @@ export const InvitadoDetallePage: React.FC = () => {
     try {
       const nuevo = await cambiarUsuarioInvitado(id, limpio);
       setProfile({ ...profile, username: nuevo });
-      await guardarCopia({ usuario: nuevo });
       setSuccessMsg(`Usuario cambiado a «${nuevo}». Avísale para que entre con ese usuario.`);
       setEditUsuario(null);
     } catch (err) {
@@ -152,50 +123,19 @@ export const InvitadoDetallePage: React.FC = () => {
     }
   };
 
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleRestablecer = async () => {
     if (!id) return;
     setErrorMsg(null);
     setSuccessMsg(null);
-
-    if (newPassword.length < 8) {
-      setErrorMsg('La nueva contraseña debe tener al menos 8 caracteres.');
-      return;
-    }
-
-    setUpdatingPass(true);
+    setRestableciendo(true);
     try {
-      const { data, error } = await supabase.functions.invoke('admin-invitados', {
-        body: {
-          accion: 'cambiar_clave',
-          invitado_id: id,
-          clave: newPassword,
-        },
-      });
-
-      if (error) {
-        setErrorMsg(error.message || 'Error al actualizar la contraseña.');
-        return;
-      }
-
-      if (data?.error) {
-        setErrorMsg(data.error);
-        return;
-      }
-
-      if (data?.ok) {
-        await guardarCopia({ contrasena: newPassword });
-        setSuccessMsg('Contraseña actualizada con éxito.');
-        setNewPassword('');
-      }
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        setErrorMsg(err.message);
-      } else {
-        setErrorMsg('Error al conectar con el servidor.');
-      }
+      setTemporal(await restablecerClaveInvitado(id));
+      setConfirmarRestablecer(false);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'No se pudo restablecer la contraseña.');
+      setConfirmarRestablecer(false);
     } finally {
-      setUpdatingPass(false);
+      setRestableciendo(false);
     }
   };
 
@@ -311,19 +251,18 @@ export const InvitadoDetallePage: React.FC = () => {
         </div>
       )}
 
-      {/* Datos de acceso: usuario y contraseñas (copia cifrada que solo ustedes dos pueden abrir) */}
+      {/* Usuario (las contraseñas son solo de ella: aquí no se ven) */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
         <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider flex items-center gap-2 mb-1">
-          <Lock className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
-          <span>Datos de acceso</span>
+          <AtSign className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+          <span>Usuario para entrar</span>
         </h3>
         <p className="text-[11px] text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mb-3">
-          Guardados cifrados: solo tú y esta persona pueden verlos.
+          Sus contraseñas son solo de ella: nadie más las puede ver.
         </p>
 
         {/* Usuario */}
-        <div className="py-2.5 border-b border-[#E3E7EC] dark:border-[#003A73]">
-          <span className="block text-[10px] uppercase font-['Poppins'] text-[#5B6670] dark:text-[#E3E7EC]">Usuario</span>
+        <div className="py-1">
           {editUsuario === null ? (
             <div className="flex items-center gap-1">
               <span className="flex-1 min-w-0 truncate font-mono text-sm font-semibold text-[#003A73] dark:text-white">{profile.username}</span>
@@ -361,37 +300,6 @@ export const InvitadoDetallePage: React.FC = () => {
           )}
         </div>
 
-        {/* Contraseñas */}
-        {(['contrasena', 'respaldo'] as const).map((k) => {
-          const valor = boveda?.[k];
-          const titulo = k === 'contrasena' ? 'Contraseña para entrar' : 'Contraseña de respaldo';
-          return (
-            <div key={k} className="py-2.5 border-b last:border-b-0 border-[#E3E7EC] dark:border-[#003A73]">
-              <span className="block text-[10px] uppercase font-['Poppins'] text-[#5B6670] dark:text-[#E3E7EC]">{titulo}</span>
-              {boveda === undefined ? (
-                <span className="block h-5 w-32 mt-1 rounded bg-[#E3E7EC] dark:bg-[#1F2933] animate-pulse" />
-              ) : valor ? (
-                <div className="flex items-center gap-1">
-                  <span className="flex-1 min-w-0 break-all font-mono text-sm font-semibold text-[#003A73] dark:text-white">
-                    {ver[k] ? valor : '••••••••'}
-                  </span>
-                  <button type="button" onClick={() => setVer((v) => ({ ...v, [k]: !v[k] }))} className="p-2 text-[#5B6670] dark:text-[#E3E7EC]" aria-label={ver[k] ? 'Ocultar' : 'Mostrar'}>
-                    {ver[k] ? <EyeOff className="w-4 h-4" strokeWidth={2} /> : <Eye className="w-4 h-4" strokeWidth={2} />}
-                  </button>
-                  <button type="button" onClick={() => copiar(valor, k)} className="p-2 text-[#5B6670] dark:text-[#E3E7EC]" aria-label="Copiar">
-                    {copiado === k ? <Check className="w-4 h-4 text-[#1E7A44]" strokeWidth={2} /> : <Copy className="w-4 h-4" strokeWidth={2} />}
-                  </button>
-                </div>
-              ) : (
-                <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] mt-0.5 leading-relaxed">
-                  {k === 'contrasena'
-                    ? 'Todavía no está guardada. Aparecerá cuando ella inicie sesión o la cambie, o cuando tú le pongas una nueva aquí abajo.'
-                    : 'Todavía no está guardada. Aparecerá cuando ella la escriba al entrar en un celular nuevo o la cambie en su perfil.'}
-                </p>
-              )}
-            </div>
-          );
-        })}
         {!profile.public_key && (
           <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] mt-2">Esta persona todavía no ha entrado por primera vez.</p>
         )}
@@ -426,36 +334,80 @@ export const InvitadoDetallePage: React.FC = () => {
         )}
       </div>
 
-      {/* Tarjeta para cambiar contraseña */}
+      {/* Restablecer contraseña (si la olvidó) */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
         <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider flex items-center gap-2 mb-2">
           <KeyRound className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
-          <span>Cambiar Contraseña</span>
+          <span>¿Olvidó su contraseña?</span>
         </h3>
-        <p className="text-xs text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mb-3">
-          Establece una nueva contraseña para este usuario si la olvidó o requiere acceso nuevo.
+        <p className="text-xs text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mb-3 leading-relaxed">
+          Puedes darle una contraseña temporal. Al entrar, la app le pedirá poner una nueva que solo ella conozca, y le
+          avisará que tú la restableciste. Sus mensajes no cambian.
         </p>
 
-        <form onSubmit={handleChangePassword} className="space-y-3">
-          <CampoClave
-            visibleInicial
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="Nueva contraseña (mínimo 8 caracteres)"
-            disabled={updatingPass}
-            className="w-full h-11 px-3 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] bg-white dark:bg-[#1F2933] text-sm font-mono text-[#1F2933] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#005198] transition-all"
-          />
-
-          {/* Botón secundario azul según el manual de marca */}
+        {temporal ? (
+          <div className="p-3 rounded-[5px] bg-[#F2F4F7] dark:bg-[#1F2933] border border-[#E3E7EC] dark:border-[#003A73]">
+            <span className="block text-[10px] uppercase font-['Poppins'] text-[#5B6670] dark:text-[#E3E7EC]">Contraseña temporal</span>
+            <div className="flex items-center gap-1">
+              <span className="flex-1 min-w-0 break-all font-mono text-base font-semibold text-[#003A73] dark:text-white">{temporal}</span>
+              <button type="button" onClick={() => copiar(temporal, 'temporal')} className="p-2 text-[#5B6670] dark:text-[#E3E7EC]" aria-label="Copiar contraseña temporal">
+                {copiado === 'temporal' ? <Check className="w-4 h-4 text-[#1E7A44]" strokeWidth={2} /> : <Copy className="w-4 h-4" strokeWidth={2} />}
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] leading-relaxed">
+              Dásela a ella junto con su usuario. Solo se muestra esta vez.
+            </p>
+            <button
+              type="button"
+              onClick={() => setTemporal(null)}
+              className="mt-2 w-full h-10 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] text-[#5B6670] dark:text-[#E3E7EC] font-['Poppins'] font-semibold text-xs"
+            >
+              Listo, ya se la di
+            </button>
+          </div>
+        ) : (
           <button
-            type="submit"
-            disabled={updatingPass}
+            type="button"
+            onClick={() => setConfirmarRestablecer(true)}
+            disabled={!profile.public_key}
             className="w-full h-11 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-xs flex items-center justify-center gap-2 hover:bg-[#003A73] transition-colors disabled:opacity-60"
           >
-            {updatingPass ? 'Actualizando...' : 'Guardar Nueva Contraseña'}
+            <RefreshCw className="w-4 h-4" strokeWidth={2} />
+            <span>Restablecer contraseña</span>
           </button>
-        </form>
+        )}
       </div>
+
+      {confirmarRestablecer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !restableciendo && setConfirmarRestablecer(false)}>
+          <div
+            className="w-full max-w-sm rounded-[5px] bg-white dark:bg-[#253240] p-5 shadow-[0_2px_8px_rgba(0,0,0,0.15)] border border-[#E3E7EC] dark:border-[#003A73] space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-['Poppins'] font-bold text-base text-[#003A73] dark:text-white">¿Restablecer su contraseña?</h3>
+            <p className="text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed">
+              Su contraseña actual dejará de funcionar. Te mostraremos una temporal para que se la des, y a ella le aparecerá
+              un aviso diciendo que tú la restableciste.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setConfirmarRestablecer(false)}
+                disabled={restableciendo}
+                className="flex-1 h-11 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] text-[#5B6670] dark:text-[#E3E7EC] font-['Poppins'] font-semibold text-xs"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleRestablecer}
+                disabled={restableciendo}
+                className="flex-1 h-11 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-xs disabled:opacity-60"
+              >
+                {restableciendo ? 'Restableciendo…' : 'Sí, restablecer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Zona de peligro: Eliminar Invitado */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">

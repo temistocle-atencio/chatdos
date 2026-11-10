@@ -3,6 +3,8 @@ import {
   loadLocalPrivateKey,
   saveLocalPrivateKey,
   getKnownPartnerKey,
+  loadOwnOldKeys,
+  addOwnOldKey,
   saveKnownPartnerKey,
 } from './idb';
 
@@ -30,8 +32,8 @@ export function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
 let inMemoryPrivateKey: CryptoKey | null = null;
 let inMemoryUserId: string | null = null;
 
-// Caché en memoria de las llaves derivadas de cada chat (chatId -> CryptoKey)
-const chatKeyMemoryCache = new Map<string, CryptoKey>();
+// Caché en memoria de las llaves derivadas de cada chat (por llave privada -> chat|pública del otro)
+const chatKeyMemoryCache = new WeakMap<CryptoKey, Map<string, CryptoKey>>();
 
 /**
  * Comprueba si la llave privada del usuario ya está disponible en este dispositivo.
@@ -250,9 +252,15 @@ export async function getChatKey(
   myPrivateKey: CryptoKey,
   partnerPublicJwk: JsonWebKey
 ): Promise<CryptoKey> {
-  if (chatKeyMemoryCache.has(chatId)) {
-    return chatKeyMemoryCache.get(chatId)!;
+  // La llave depende del chat y de la llave pública de la otra persona (puede cambiar)
+  const cacheId = `${chatId}|${JSON.stringify(partnerPublicJwk)}`;
+  let cache = chatKeyMemoryCache.get(myPrivateKey);
+  if (!cache) {
+    cache = new Map();
+    chatKeyMemoryCache.set(myPrivateKey, cache);
   }
+  const enCache = cache.get(cacheId);
+  if (enCache) return enCache;
 
   // 1. Importar la llave pública del compañero
   const partnerPublicKey = await window.crypto.subtle.importKey(
@@ -293,7 +301,7 @@ export async function getChatKey(
     ['encrypt', 'decrypt']
   );
 
-  chatKeyMemoryCache.set(chatId, chatKey);
+  cache.set(cacheId, chatKey);
   return chatKey;
 }
 
@@ -551,4 +559,109 @@ export async function changeBackupPassword(userId: string, actual: string, nueva
     })
     .eq('user_id', userId);
   if (errGuardar) throw new Error('No se pudo guardar la nueva contraseña de respaldo.');
+}
+
+/**
+ * Llaves de chat calculadas con las llaves públicas ANTERIORES de la otra persona.
+ * Sirven para seguir leyendo los mensajes viejos si ella empezó de nuevo con otra llave.
+ */
+export async function llavesAnterioresDelChat(
+  chatId: string,
+  myPrivateKey: CryptoKey,
+  anteriores: unknown,
+  userId?: string,
+  publicaActualDelOtro?: unknown
+): Promise<CryptoKey[]> {
+  const llaves: CryptoKey[] = [];
+  const delOtro = Array.isArray(anteriores) ? (anteriores.slice(-5).reverse() as JsonWebKey[]) : [];
+  // Llaves viejas de la otra persona con mi llave de ahora
+  for (const pub of delOtro) {
+    try {
+      llaves.push(await getChatKey(chatId, myPrivateKey, pub));
+    } catch {
+      /* llave dañada: se ignora */
+    }
+  }
+  // Mis llaves viejas en este celular (si yo renové la mía), con la llave de ahora y las viejas del otro
+  if (userId) {
+    const mias = await loadOwnOldKeys(userId);
+    const publicas = [publicaActualDelOtro as JsonWebKey | undefined, ...delOtro].filter(Boolean) as JsonWebKey[];
+    for (const vieja of mias.slice(-5).reverse()) {
+      for (const pub of publicas) {
+        try {
+          llaves.push(await getChatKey(chatId, vieja.privateKey, pub));
+        } catch {
+          /* se ignora */
+        }
+      }
+    }
+  }
+  return llaves;
+}
+
+/** Intenta descifrar con la llave actual y, si no se puede, con las anteriores. */
+export async function decryptJSONConRespaldo<T>(
+  llave: CryptoKey,
+  anteriores: CryptoKey[],
+  ciphertextBase64: string,
+  ivBase64: string
+): Promise<T> {
+  try {
+    return await decryptJSON<T>(llave, ciphertextBase64, ivBase64);
+  } catch (e) {
+    for (const vieja of anteriores) {
+      try {
+        return await decryptJSON<T>(vieja, ciphertextBase64, ivBase64);
+      } catch {
+        /* probar la siguiente */
+      }
+    }
+    throw e;
+  }
+}
+
+/**
+ * Empezar de nuevo cuando se olvidó la contraseña de respaldo en un celular nuevo:
+ * la llave pública de ahora se guarda en "llaves anteriores" (para que la otra persona
+ * siga leyendo los mensajes viejos) y se crea una llave nueva con una contraseña de respaldo nueva.
+ * Los mensajes viejos no se pueden abrir en este celular: nadie tiene cómo recuperarlos.
+ */
+export async function empezarDeNuevo(userId: string, nuevaContrasenaRespaldo: string): Promise<void> {
+  // Si este celular tiene la llave de ahora, se guarda aquí como "anterior" para seguir leyendo lo de antes
+  const actualLocal = await getLocalPrivateKey(userId);
+  if (!nuevaContrasenaRespaldo || nuevaContrasenaRespaldo.length < 8) {
+    throw new Error('La contraseña de respaldo debe tener al menos 8 caracteres.');
+  }
+  const { data: perfil, error } = await supabase
+    .from('profiles')
+    .select('public_key, llaves_anteriores')
+    .eq('id', userId)
+    .single();
+  if (error || !perfil) throw new Error('No se pudo leer tu perfil. Revisa tu conexión.');
+  if (actualLocal && perfil.public_key) {
+    await addOwnOldKey(userId, { privateKey: actualLocal, publicJwk: perfil.public_key as JsonWebKey });
+  }
+  if (perfil.public_key) {
+    const lista = Array.isArray(perfil.llaves_anteriores) ? perfil.llaves_anteriores : [];
+    const { error: errGuardar } = await supabase
+      .from('profiles')
+      .update({ llaves_anteriores: [...lista, perfil.public_key] })
+      .eq('id', userId);
+    if (errGuardar) throw new Error('No se pudo guardar tu llave anterior. Intenta de nuevo.');
+  }
+  await generateAndBackupKeys(userId, nuevaContrasenaRespaldo);
+}
+
+/** Llaves viejas de MI colección de stickers (si renové mi llave en este celular). */
+export async function llavesAnterioresPropias(idLlave: string, userId: string): Promise<CryptoKey[]> {
+  const mias = await loadOwnOldKeys(userId);
+  const llaves: CryptoKey[] = [];
+  for (const vieja of mias.slice(-5).reverse()) {
+    try {
+      llaves.push(await getChatKey(idLlave, vieja.privateKey, vieja.publicJwk));
+    } catch {
+      /* se ignora */
+    }
+  }
+  return llaves;
 }

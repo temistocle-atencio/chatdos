@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { KeyRound, ShieldAlert, AlertCircle, RefreshCw, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { compartirConAdmin, tomarAccesoPendiente } from '../lib/cuenta';
+import { RespaldoNuevo } from '../components/RespaldoNuevo';
 import { restoreKeysFromBackup } from '../lib/crypto';
 import { CampoClave } from '../components/CampoClave';
 
@@ -13,6 +13,7 @@ export const RecuperarLlavePage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [olvide, setOlvide] = useState<'no' | 'explicar' | 'nueva'>('no');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,22 +30,7 @@ export const RecuperarLlavePage: React.FC = () => {
     try {
       // 1. Descifra la llave PKCS8 desde key_backups usando PBKDF2 y la importa a IndexedDB
       await restoreKeysFromBackup(user.id, password);
-      if (!isAdmin) {
-        const acceso = tomarAccesoPendiente();
-        void compartirConAdmin(user.id, { ...(acceso ?? {}), respaldo: password });
-      }
-
-      // 2. Redirige a la pantalla principal correspondiente
-      if (isAdmin) {
-        navigate('/chats', { replace: true });
-      } else {
-        const chatId = await getMySingleChatId();
-        if (chatId) {
-          navigate(`/chat/${chatId}`, { replace: true });
-        } else {
-          navigate('/perfil', { replace: true });
-        }
-      }
+      await irAlInicio();
     } catch (err: unknown) {
       if (err instanceof Error) {
         setErrorMsg(err.message);
@@ -53,6 +39,19 @@ export const RecuperarLlavePage: React.FC = () => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const irAlInicio = async () => {
+    if (isAdmin) {
+      navigate('/chats', { replace: true });
+    } else {
+      const chatId = await getMySingleChatId();
+      if (chatId) {
+        navigate(`/chat/${chatId}`, { replace: true });
+      } else {
+        navigate('/perfil', { replace: true });
+      }
     }
   };
 
@@ -85,6 +84,40 @@ export const RecuperarLlavePage: React.FC = () => {
           </div>
         )}
 
+        {olvide !== 'no' ? (
+          <div className="space-y-3">
+            <div className="p-3 rounded-[5px] bg-[#FDEBD3] text-[#8A4B00] text-xs font-['Inter'] leading-relaxed space-y-2">
+              <p className="flex items-start gap-2">
+                <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" strokeWidth={2} />
+                <strong>Nadie puede recuperar la contraseña de respaldo, ni el administrador.</strong>
+              </p>
+              <p>
+                Puedes <strong>empezar de nuevo</strong> en este celular con una contraseña de respaldo nueva: el chat sigue normal desde hoy, pero
+                los mensajes de antes no se podrán abrir aquí. La otra persona sí los sigue viendo en su celular.
+              </p>
+            </div>
+            {olvide === 'explicar' ? (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOlvide('no')}
+                  className="flex-1 h-11 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] text-[#5B6670] dark:text-[#E3E7EC] font-['Poppins'] font-semibold text-xs"
+                >
+                  Volver
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOlvide('nueva')}
+                  className="flex-[2] h-11 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-xs"
+                >
+                  Empezar de nuevo aquí
+                </button>
+              </div>
+            ) : (
+              <RespaldoNuevo onListo={() => void irAlInicio()} onCancelar={() => setOlvide('no')} textoBoton="Empezar de nuevo" />
+            )}
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-['Poppins'] uppercase tracking-wider text-[#5B6670] dark:text-[#E3E7EC] mb-1 font-medium">
@@ -114,7 +147,18 @@ export const RecuperarLlavePage: React.FC = () => {
               <span>Descifrar y Restaurar Llave</span>
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setErrorMsg(null);
+              setOlvide('explicar');
+            }}
+            className="w-full text-xs font-['Inter'] text-[#005198] dark:text-[#E3E7EC] underline underline-offset-2"
+          >
+            Olvidé mi contraseña de respaldo
+          </button>
         </form>
+        )}
 
         <div className="mt-6 pt-4 border-t border-[#E3E7EC] dark:border-[#003A73] flex justify-between items-center text-xs">
           <button

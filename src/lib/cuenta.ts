@@ -1,15 +1,7 @@
-// Cambiar usuario y contraseñas, y la "bóveda" de datos de acceso del invitado.
-// La bóveda se guarda CIFRADA con la llave del chat entre el invitado y su administrador:
-// solo ellos dos la pueden abrir. El servidor nunca ve las contraseñas.
+// Cambiar usuario y contraseñas. Cada persona conoce solo sus propias contraseñas:
+// el administrador puede restablecer la de un invitado, pero nunca verla.
 import { supabase } from './supabase';
-import { changeBackupPassword, decryptJSON, encryptJSON, getChatKey, getLocalPrivateKey } from './crypto';
-
-export interface DatosAcceso {
-  usuario?: string;
-  contrasena?: string;
-  respaldo?: string; // contraseña de respaldo (protege la llave de cifrado)
-  actualizado?: number;
-}
+import { changeBackupPassword } from './crypto';
 
 const DOMINIO = 'chatdos.invalid';
 
@@ -51,68 +43,35 @@ export async function cambiarMiContrasena(usuario: string, actual: string, nueva
 // ---------- Contraseña de respaldo ----------
 export const cambiarMiRespaldo = (userId: string, actual: string, nueva: string) => changeBackupPassword(userId, actual, nueva);
 
-// ---------- Bóveda (cifrada con la llave del chat) ----------
-async function llaveChat(userId: string, chatId: string, publicaDelOtro: unknown): Promise<CryptoKey> {
-  const priv = await getLocalPrivateKey(userId);
-  if (!priv || !publicaDelOtro) throw new Error('Falta la llave de cifrado.');
-  return getChatKey(chatId, priv, publicaDelOtro as JsonWebKey);
-}
-
-/** Para el invitado: su único chat y la llave pública del administrador. */
-async function miChatConAdmin(userId: string): Promise<{ chatId: string; publica: unknown } | null> {
-  const { data: mio } = await supabase.from('chat_members').select('chat_id').eq('user_id', userId).limit(1).maybeSingle();
-  if (!mio) return null;
-  const { data: otro } = await supabase.from('chat_members').select('user_id').eq('chat_id', mio.chat_id).neq('user_id', userId).maybeSingle();
-  if (!otro) return null;
-  const { data: perfil } = await supabase.from('profiles').select('public_key').eq('id', otro.user_id).maybeSingle();
-  if (!perfil?.public_key) return null;
-  return { chatId: mio.chat_id, publica: perfil.public_key };
-}
-
-export async function leerBoveda(userId: string, chatId: string, publicaDelOtro: unknown): Promise<DatosAcceso | null> {
-  const { data } = await supabase.from('credenciales').select('ciphertext, iv').eq('chat_id', chatId).maybeSingle();
-  if (!data) return null;
-  try {
-    return await decryptJSON<DatosAcceso>(await llaveChat(userId, chatId, publicaDelOtro), data.ciphertext, data.iv);
-  } catch {
-    return null;
+// ---------- Restablecer (administrador) ----------
+/** Le pone una contraseña temporal al invitado. Se muestra una sola vez; a ella le llega un aviso. */
+export async function restablecerClaveInvitado(invitadoId: string): Promise<string> {
+  const { data, error } = await supabase.functions.invoke('admin-invitados', {
+    body: { accion: 'restablecer_clave', invitado_id: invitadoId },
+  });
+  if (error || data?.error || !data?.temporal) {
+    throw new Error(data?.error || (await mensajeDeError(error)) || 'No se pudo restablecer la contraseña');
   }
+  return data.temporal as string;
 }
 
-export async function guardarEnBoveda(
-  userId: string,
-  chatId: string,
-  publicaDelOtro: unknown,
-  cambios: DatosAcceso
-): Promise<void> {
-  const llave = await llaveChat(userId, chatId, publicaDelOtro);
-  const actual = (await leerBoveda(userId, chatId, publicaDelOtro)) ?? {};
-  const nuevo: DatosAcceso = { ...actual, ...cambios, actualizado: Date.now() };
-  const cif = await encryptJSON(llave, nuevo);
-  const { error } = await supabase
-    .from('credenciales')
-    .upsert({ chat_id: chatId, ciphertext: cif.ciphertext, iv: cif.iv, updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: 'chat_id' });
-  if (error) throw error;
+// ---------- Aviso de contraseña restablecida (invitado) ----------
+export async function leerAvisoClave(userId: string): Promise<string | null> {
+  const { data } = await supabase.from('profiles').select('clave_restablecida_at').eq('id', userId).maybeSingle();
+  return (data as { clave_restablecida_at?: string | null } | null)?.clave_restablecida_at ?? null;
 }
 
-/** El invitado guarda sus datos para que su administrador los pueda ver (no falla si no se puede). */
-export async function compartirConAdmin(userId: string, cambios: DatosAcceso): Promise<void> {
-  try {
-    const chat = await miChatConAdmin(userId);
-    if (chat) await guardarEnBoveda(userId, chat.chatId, chat.publica, cambios);
-  } catch (e) {
-    console.warn('[cuenta] no se pudo guardar en la bóveda', e);
+/** Pone la contraseña nueva (que solo ella conoce) y quita el aviso. */
+export async function ponerClaveTrasRestablecer(userId: string, nueva: string): Promise<void> {
+  if (nueva.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres.');
+  const { error } = await supabase.auth.updateUser({ password: nueva });
+  if (error) {
+    const m = error.message.toLowerCase();
+    if (m.includes('different')) throw new Error('Pon una contraseña distinta a la temporal.');
+    if (m.includes('reauth') || m.includes('nonce') || m.includes('recent')) {
+      throw new Error('Por seguridad, cierra sesión y vuelve a entrar con la contraseña temporal que te dio el administrador.');
+    }
+    throw new Error('No se pudo guardar la contraseña. Revisa tu conexión.');
   }
+  await supabase.from('profiles').update({ clave_restablecida_at: null }).eq('id', userId);
 }
-
-// La contraseña escrita al iniciar sesión se guarda SOLO en memoria (nunca en el celular)
-// hasta que el invitado tenga su llave y se pueda guardar cifrada en la bóveda.
-let accesoPendiente: { usuario: string; contrasena: string } | null = null;
-export const recordarAcceso = (usuario: string, contrasena: string) => {
-  accesoPendiente = { usuario, contrasena };
-};
-export const tomarAccesoPendiente = () => {
-  const a = accesoPendiente;
-  accesoPendiente = null;
-  return a;
-};

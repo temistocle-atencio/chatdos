@@ -4,7 +4,7 @@
 //   se puede calcular en este celular (a partir de la llave privada de la persona).
 // - El servidor no puede ver los stickers.
 import { supabase } from './supabase';
-import { decryptFile, decryptJSON, encryptFile, encryptJSON, getChatKey, getLocalPrivateKey } from './crypto';
+import { decryptFile, decryptJSONConRespaldo, encryptFile, encryptJSON, getChatKey, getLocalPrivateKey, llavesAnterioresPropias } from './crypto';
 
 export interface MetaSticker {
   key: string; // llave AES del archivo (base64)
@@ -56,9 +56,10 @@ export async function cargarColeccion(userId: string, miLlavePublica: unknown, f
     .order('used_at', { ascending: false });
   if (error) throw error;
   const lista: Sticker[] = [];
+  const viejas = await llavesAnterioresPropias(`stickers:${userId}`, userId).catch(() => []);
   for (const r of data ?? []) {
     try {
-      lista.push({ id: r.id, path: r.path, meta: await decryptJSON<MetaSticker>(llave, r.meta, r.iv) });
+      lista.push({ id: r.id, path: r.path, meta: await decryptJSONConRespaldo<MetaSticker>(llave, viejas, r.meta, r.iv) });
     } catch {
       /* uno dañado no impide ver los demás */
     }
