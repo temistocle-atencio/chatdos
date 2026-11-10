@@ -82,3 +82,30 @@ html.dark * {
   20%, 60% { transform: translateX(-8px); }
   40%, 80% { transform: translateX(8px); }
 }
+
+/* ===== Sensación de app (no de página web) =====
+   Nada se selecciona ni abre menús al mantener presionado; solo los campos donde se escribe. */
+html,
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none; /* iPhone: sin menú de "Copiar / Buscar / Compartir" */
+  -webkit-tap-highlight-color: transparent; /* sin el recuadro azul al tocar */
+  overscroll-behavior: none; /* sin rebote ni "jalar para recargar" */
+  touch-action: manipulation; /* sin zoom por doble toque */
+  -webkit-text-size-adjust: 100%;
+}
+input,
+textarea,
+[contenteditable='true'],
+.se-puede-seleccionar {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+img,
+video,
+a {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
