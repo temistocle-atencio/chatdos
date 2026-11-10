@@ -307,7 +307,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           transition: swipeX ? 'none' : 'transform 150ms ease-out',
           WebkitTouchCallout: 'none',
         }}
-        className={`group relative max-w-[85%] ${esSticker ? 'p-0' : 'px-2 pt-1.5 pb-2 rounded-[5px] shadow-[0_1px_2px_rgba(0,0,0,0.12)]'} select-none md:select-text ${bubbleColor} ${
+        className={`group relative max-w-[min(85%,34rem)] ${esSticker ? 'p-0' : 'px-2 pt-1.5 pb-2 rounded-[5px] shadow-[0_1px_2px_rgba(0,0,0,0.12)]'} select-none md:select-text ${bubbleColor} ${
           isFirstInGroup ? (isMine ? 'rounded-tr-none' : 'rounded-tl-none') : ''
         } ${highlighted ? 'outline outline-2 outline-[#005198] dark:outline-white' : ''}`}
       >

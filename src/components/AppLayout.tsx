@@ -192,7 +192,7 @@ export const AppLayout: React.FC = () => {
       )}
 
       {/* Contenido principal: en chat ocupa todo el alto sin márgenes exteriores para cabecera limpia */}
-      <main className={`flex-1 w-full max-w-md mx-auto flex flex-col ${isChatRoute ? 'p-0 h-full min-h-0 overflow-hidden' : 'px-4 py-4'}`}>
+      <main className={`flex-1 w-full mx-auto flex flex-col ${isChatRoute ? 'p-0 h-full min-h-0 overflow-hidden' : 'max-w-md px-4 py-4'}`}>
         <Outlet />
       </main>
     </div>

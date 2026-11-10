@@ -1636,7 +1636,10 @@ export const ChatPage: React.FC = () => {
   const hasInputText = inputText.trim().length > 0;
 
   return (
-    <div className="flex-1 flex flex-col h-full min-h-0 w-full relative overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933]">
+    <div
+      className="flex-1 flex flex-col h-full min-h-0 w-full relative overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933]"
+      style={{ paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}
+    >
       {/* 4. UNA SOLA CABECERA EN EL CHAT (fondo #003A73 con foto, nombre, estado, llave y menú) */}
       <header
         className="bg-[#003A73] text-white px-3 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30"
