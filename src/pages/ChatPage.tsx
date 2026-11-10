@@ -170,7 +170,7 @@ export const ChatPage: React.FC = () => {
   // ETAPA 6: fotos, videos y audios
   const [uploads, setUploads] = useState<Record<string, UploadState>>({});
   const [attachOpen, setAttachOpen] = useState(false);
-  const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
+  const [pendingMedia, setPendingMedia] = useState<PendingMedia[] | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [viewer, setViewer] = useState<{
     url?: string;
@@ -185,6 +185,7 @@ export const ChatPage: React.FC = () => {
   const retryRef = useRef<Map<string, { media: PendingMedia; payload: MessagePayload; viewOnce: boolean; replyId: string | null; fileKey?: string }>>(new Map());
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const videoCameraInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<DecryptedMessage[]>([]);
 
@@ -1197,31 +1198,44 @@ export const ChatPage: React.FC = () => {
   // ===================== ETAPA 6: archivos =====================
 
   // Revisar y preparar el archivo elegido (comprimir fotos, revisar tamaño y duración)
-  const handleFilePicked = async (file: File | undefined, forceAudio = false) => {
-    setAttachOpen(false);
-    if (!file) return;
-    setPreparing(true);
-    try {
-      if (!forceAudio && file.type.startsWith('image/')) {
-        const img = await compressImage(file);
-        setPendingMedia({ kind: 'image', blob: img.blob, mime: img.mime, width: img.width, height: img.height, thumb: img.thumb });
-      } else if (!forceAudio && file.type.startsWith('video/')) {
-        if (file.size > MAX_FILE_BYTES) throw new Error('El video pesa más de 25 MB. Recórtalo o grábalo más corto.');
-        const info = await inspectVideo(file);
-        if (info.duration > MAX_VIDEO_SECONDS + 0.5) throw new Error('El video dura más de 2 minutos. Recórtalo antes de enviarlo.');
-        setPendingMedia({ kind: 'video', blob: file, mime: file.type || 'video/mp4', ...info });
-      } else if (file.type.startsWith('audio/') || forceAudio) {
-        if (file.size > MAX_FILE_BYTES) throw new Error('El audio pesa más de 25 MB.');
-        const duration = await audioDuration(file);
-        setPendingMedia({ kind: 'audio', blob: file, mime: file.type || 'audio/mpeg', duration, name: file.name, music: true });
-      } else {
-        throw new Error('Ese tipo de archivo no se puede enviar.');
-      }
-    } catch (err) {
-      setToast(err instanceof Error ? err.message : 'No se pudo preparar el archivo');
-    } finally {
-      setPreparing(false);
+  // Revisa y prepara un archivo (comprime fotos, revisa duración de videos y audios)
+  const prepararArchivo = async (file: File, forceAudio = false): Promise<PendingMedia> => {
+    if (!forceAudio && file.type.startsWith('image/')) {
+      const img = await compressImage(file);
+      return { kind: 'image', blob: img.blob, mime: img.mime, width: img.width, height: img.height, thumb: img.thumb };
     }
+    if (!forceAudio && file.type.startsWith('video/')) {
+      if (file.size > MAX_FILE_BYTES) throw new Error('Un video pesa más de 25 MB. Recórtalo o grábalo más corto.');
+      const info = await inspectVideo(file);
+      if (info.duration > MAX_VIDEO_SECONDS + 0.5) throw new Error('Un video dura más de 2 minutos. Recórtalo antes de enviarlo.');
+      return { kind: 'video', blob: file, mime: file.type || 'video/mp4', ...info };
+    }
+    if (file.type.startsWith('audio/') || forceAudio) {
+      if (file.size > MAX_FILE_BYTES) throw new Error('El audio pesa más de 25 MB.');
+      const duration = await audioDuration(file);
+      return { kind: 'audio', blob: file, mime: file.type || 'audio/mpeg', duration, name: file.name, music: true };
+    }
+    throw new Error('Ese tipo de archivo no se puede enviar.');
+  };
+
+  const MAX_A_LA_VEZ = 10;
+  const handleFilePicked = async (files: FileList | File[] | null | undefined, forceAudio = false) => {
+    setAttachOpen(false);
+    const lista = Array.from(files ?? []);
+    if (!lista.length) return;
+    setPreparing(true);
+    const listos: PendingMedia[] = [];
+    let aviso: string | null = lista.length > MAX_A_LA_VEZ ? `Se tomaron las primeras ${MAX_A_LA_VEZ}` : null;
+    for (const f of lista.slice(0, MAX_A_LA_VEZ)) {
+      try {
+        listos.push(await prepararArchivo(f, forceAudio));
+      } catch (err) {
+        aviso = err instanceof Error ? err.message : 'No se pudo preparar un archivo';
+      }
+    }
+    setPreparing(false);
+    if (aviso) setToast(aviso);
+    if (listos.length) setPendingMedia(listos);
   };
 
   // Subir (cifrado) y guardar el mensaje. Sirve también para reintentar.
@@ -1285,11 +1299,16 @@ export const ChatPage: React.FC = () => {
     }
   };
 
-  const sendMedia = (media: PendingMedia, caption: string, viewOnce: boolean) => {
-    if (!user || !chatId || !chatKey) return;
+  const sendMedia = (
+    media: PendingMedia,
+    caption: string,
+    viewOnce: boolean,
+    opts: { sinRespuesta?: boolean; orden?: number; diferir?: boolean } = {}
+  ): (() => Promise<void>) | null => {
+    if (!user || !chatId || !chatKey) return null;
     const messageId = crypto.randomUUID();
-    const sentAt = Date.now();
-    const replying = replyTo;
+    const sentAt = Date.now() + (opts.orden ?? 0); // varias fotos: cada una 1 ms después, para que queden en orden
+    const replying = opts.sinRespuesta ? null : replyTo;
     const payload: MessagePayload = {
       v: 1,
       sentAt,
@@ -1336,12 +1355,27 @@ export const ChatPage: React.FC = () => {
     setPendingMedia(null);
     scrollToBottom();
     const { blob, ...info } = media;
-    ponerEnBandeja({
+    // La subida: ya, o después (cuando se mandan varias, en fila para que lleguen en orden)
+    // Se guarda ya en la bandeja de salida (si se cierra la app, se envía después)
+    const enBandeja = ponerEnBandeja({
       id: messageId,
       chatId,
       creado: sentAt,
       media: { blob, info, payload, viewOnce, replyId: replying ? replying.id : null },
-    }).finally(() => uploadAndSave(messageId, media, payload, viewOnce, replying ? replying.id : null));
+    }).catch(() => {});
+    const subir = () => enBandeja.then(() => uploadAndSave(messageId, media, payload, viewOnce, replying ? replying.id : null));
+    if (opts.diferir) return subir;
+    void subir();
+    return null;
+  };
+
+  // Varias fotos/videos a la vez: aparecen todas al instante y se suben una tras otra (en orden)
+  const sendMedias = async (lista: PendingMedia[], caption: string, viewOnce: boolean) => {
+    const subidas = lista
+      .map((m, i) => sendMedia(m, i === 0 ? caption : '', viewOnce, { sinRespuesta: i > 0, orden: i, diferir: true }))
+      .filter((x): x is () => Promise<void> => !!x);
+    setPendingMedia(null);
+    for (const subir of subidas) await subir();
   };
 
   const retryUpload = (messageId: string) => {
@@ -1952,20 +1986,33 @@ export const ChatPage: React.FC = () => {
           ref={galleryInputRef}
           type="file"
           accept="image/*,video/*"
+          multiple
           className="hidden"
           onChange={(e) => {
-            handleFilePicked(e.target.files?.[0]);
+            handleFilePicked(e.target.files);
+            e.target.value = '';
+          }}
+        />
+        {/* Cámara: uno para foto y otro para video (así el iPhone abre directo el modo correcto) */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            handleFilePicked(e.target.files);
             e.target.value = '';
           }}
         />
         <input
-          ref={cameraInputRef}
+          ref={videoCameraInputRef}
           type="file"
-          accept="image/*,video/*"
+          accept="video/*"
           capture="environment"
           className="hidden"
           onChange={(e) => {
-            handleFilePicked(e.target.files?.[0]);
+            handleFilePicked(e.target.files);
             e.target.value = '';
           }}
         />
@@ -1975,7 +2022,7 @@ export const ChatPage: React.FC = () => {
           accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg"
           className="hidden"
           onChange={(e) => {
-            handleFilePicked(e.target.files?.[0], true);
+            handleFilePicked(e.target.files, true);
             e.target.value = '';
           }}
         />
@@ -1992,6 +2039,10 @@ export const ChatPage: React.FC = () => {
             avisarSelectorArchivo();
             cameraInputRef.current?.click();
           }}
+          onVideoCamera={() => {
+            avisarSelectorArchivo();
+            videoCameraInputRef.current?.click();
+          }}
           onAudioFile={() => {
             avisarSelectorArchivo();
             audioInputRef.current?.click();
@@ -2001,9 +2052,10 @@ export const ChatPage: React.FC = () => {
 
       {pendingMedia && (
         <MediaComposer
-          media={pendingMedia}
+          medias={pendingMedia}
           onCancel={() => setPendingMedia(null)}
-          onSend={({ caption, viewOnce }) => sendMedia(pendingMedia, caption, viewOnce)}
+          onRemove={(i) => setPendingMedia((l) => (l && l.length > 1 ? l.filter((_, j) => j !== i) : null))}
+          onSend={({ caption, viewOnce }) => sendMedias(pendingMedia, caption, viewOnce)}
         />
       )}
 

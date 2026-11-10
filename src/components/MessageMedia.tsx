@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { FotoConZoom } from './FotoConZoom';
 import { Play, Pause, Music, Mic, Image as ImageIcon, Video, Eye, EyeOff, RotateCw, Loader2, X } from 'lucide-react';
 import type { DecryptedMessage } from '../types/chat';
 import { downloadDecrypted, getCachedUrl, formatDuration, formatBytes } from '../lib/media';
@@ -388,7 +389,7 @@ export const MediaViewer: React.FC<{
         {loading || !url ? (
           <Loader2 className="w-10 h-10 text-white animate-spin" strokeWidth={2} />
         ) : kind === 'image' ? (
-          <img src={url} alt="Foto" className="max-w-full max-h-full object-contain" draggable={false} />
+          <FotoConZoom src={url} />
         ) : kind === 'video' ? (
           <video
             src={url}
