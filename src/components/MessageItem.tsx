@@ -211,12 +211,13 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     // Sticker: la imagen sola y la hora en una etiquetita
     if (media && esSticker) {
       return (
-        <>
+        <div className="relative pb-1">
           {media}
-          <div className={`flex ${isMine ? 'justify-end' : 'justify-start'} mt-0.5`}>
-            <span className="inline-flex items-center px-1.5 pb-[5px] rounded-[8px] bg-[#1F2933]/55 [&_*]:!text-white">{metadata}</span>
-          </div>
-        </>
+          {/* La hora va encima de la esquina del sticker, como en WhatsApp */}
+          <span className="absolute bottom-0 right-1 inline-flex items-center px-2 py-0.5 rounded-full bg-[#1F2933]/55 [&_*]:!text-white [&>span]:!m-0 [&>span]:!top-0 [&>span]:!float-none scale-90 origin-bottom-right">
+            {metadata}
+          </span>
+        </div>
       );
     }
 

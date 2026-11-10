@@ -146,13 +146,13 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
 
   // ----- Sticker (sin burbuja ni fondo) -----
   if (kind === 'image' && media?.sticker) {
-    const lado = 150;
+    const lado = 128; // tamaño como en WhatsApp
     const r = media.width && media.height ? media.width / media.height : 1;
     const style = r >= 1 ? { width: lado, height: lado / r } : { width: lado * r, height: lado };
     return (
       <div className="relative" style={style}>
         {url ? (
-          <img src={url} alt="Sticker" className="w-full h-full object-contain" draggable={false} />
+          <img src={url} alt="Sticker" className="w-full h-full object-contain rounded-[12px]" draggable={false} />
         ) : error ? (
           <button
             type="button"

@@ -19,7 +19,7 @@ interface Texto {
 }
 
 const COLORES = ['#FFFFFF', '#1F2933', '#F28C1B', '#005198', '#FFD60A', '#E5484D', '#1E7A44', '#C084FC'];
-const GROSOR_BORDE: Record<Borde, number> = { no: 0, fino: 9, grueso: 16 };
+const GROSOR_BORDE: Record<Borde, number> = { no: 0, fino: 6, grueso: 11 };
 const FUENTE = (tam: number) => `700 ${tam}px Poppins, "Arial Rounded MT Bold", system-ui, sans-serif`;
 
 // Contorno que contrasta con el color del texto (para que se lea sobre cualquier fondo)
