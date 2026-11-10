@@ -6,6 +6,7 @@ import {
   loadOwnOldKeys,
   addOwnOldKey,
   saveKnownPartnerKey,
+  clearLocalPrivateKey,
 } from './idb';
 
 // Conversión binaria <-> Base64
@@ -691,4 +692,82 @@ export async function llavesAnterioresPropias(idLlave: string, userId: string): 
     }
   }
   return llaves;
+}
+
+// ---------- Revisar que la llave de este celular sea la misma que la de la cuenta ----------
+// Punto base de la curva P-256: ECDH(mi privada, G) da la coordenada x de MI llave pública.
+const PUNTO_G: JsonWebKey = {
+  kty: 'EC',
+  crv: 'P-256',
+  x: 'axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY',
+  y: 'T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU',
+};
+const PRIMO = 2n ** 256n - 2n ** 224n + 2n ** 192n + 2n ** 96n - 1n;
+const CURVA_B = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604bn;
+
+const aBase64Url = (b: Uint8Array) => bytesToBase64(b).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const potencia = (b: bigint, e: bigint, m: bigint) => {
+  let r = 1n;
+  b %= m;
+  while (e > 0n) {
+    if (e & 1n) r = (r * b) % m;
+    b = (b * b) % m;
+    e >>= 1n;
+  }
+  return r;
+};
+
+/** Calcula la llave pública que corresponde a una llave privada (aunque no se pueda exportar). */
+export async function publicaDeLlavePrivada(privada: CryptoKey): Promise<JsonWebKey> {
+  const g = await window.crypto.subtle.importKey('jwk', PUNTO_G, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const x = new Uint8Array(await window.crypto.subtle.deriveBits({ name: 'ECDH', public: g }, privada, 256));
+  const X = BigInt('0x' + Array.from(x, (v) => v.toString(16).padStart(2, '0')).join(''));
+  const Y = potencia((((X ** 3n - 3n * X + CURVA_B) % PRIMO) + PRIMO) % PRIMO, (PRIMO + 1n) / 4n, PRIMO);
+  const y = new Uint8Array(Y.toString(16).padStart(64, '0').match(/../g)!.map((h) => parseInt(h, 16)));
+  return { kty: 'EC', crv: 'P-256', x: aBase64Url(x), y: aBase64Url(y), ext: true };
+}
+
+/**
+ * Si la llave de este celular NO es la de la cuenta (porque se creó otra en otro lugar, por ejemplo
+ * en el navegador), se guarda la de este celular como "anterior" (para seguir leyendo lo de antes, aquí y
+ * en el celular de la otra persona) y se pide la contraseña de respaldo para usar la llave actual.
+ * Devuelve 'distinta' si hubo que hacer ese cambio.
+ */
+export async function revisarLlaveLocal(userId: string): Promise<'ok' | 'distinta' | 'desconocido'> {
+  try {
+    const local = await getLocalPrivateKey(userId);
+    if (!local) return 'desconocido';
+    const { data: perfil, error } = await supabase
+      .from('profiles')
+      .select('public_key, llaves_anteriores')
+      .eq('id', userId)
+      .maybeSingle();
+    const servidor = perfil?.public_key as JsonWebKey | null | undefined;
+    if (error || !servidor?.x) return 'desconocido';
+    const mia = await publicaDeLlavePrivada(local);
+    if (mia.x === servidor.x) return 'ok';
+
+    // 1) La otra persona debe poder seguir leyendo lo que se escribió con esta llave
+    const lista = (Array.isArray(perfil?.llaves_anteriores) ? perfil!.llaves_anteriores : []) as JsonWebKey[];
+    if (!lista.some((k) => k?.x === mia.x)) {
+      const { error: errGuardar } = await supabase
+        .from('profiles')
+        .update({ llaves_anteriores: [...lista, mia] })
+        .eq('id', userId);
+      if (errGuardar) return 'desconocido';
+    }
+    // 2) Este celular la guarda como anterior, para seguir leyendo aquí los mensajes de antes
+    const mias = await loadOwnOldKeys(userId);
+    if (!mias.some((k) => k.publicJwk?.x === mia.x)) await addOwnOldKey(userId, { privateKey: local, publicJwk: mia });
+    // 3) Se quita como llave actual: se pedirá la contraseña de respaldo de la llave de la cuenta
+    await clearLocalPrivateKey(userId);
+    if (inMemoryUserId === userId) {
+      inMemoryPrivateKey = null;
+      inMemoryUserId = null;
+    }
+    return 'distinta';
+  } catch (e) {
+    console.warn('[cifrado] no se pudo revisar la llave', e);
+    return 'desconocido';
+  }
 }

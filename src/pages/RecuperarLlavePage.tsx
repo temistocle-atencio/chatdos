@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound, ShieldAlert, AlertCircle, RefreshCw, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { RespaldoNuevo } from '../components/RespaldoNuevo';
@@ -9,6 +9,7 @@ import { CampoClave } from '../components/CampoClave';
 export const RecuperarLlavePage: React.FC = () => {
   const { user, isAdmin, getMySingleChatId, signOut } = useAuth();
   const navigate = useNavigate();
+  const llaveCambiada = !!(useLocation().state as { llaveCambiada?: boolean } | null)?.llaveCambiada;
 
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -76,6 +77,13 @@ export const RecuperarLlavePage: React.FC = () => {
           Esta cuenta ya tiene una llave de cifrado activa en otro dispositivo. Para poder leer
           y descifrar tus conversaciones en este navegador, ingresa tu <strong>contraseña de respaldo</strong>.
         </p>
+
+        {llaveCambiada && (
+          <div className="mb-4 p-3 rounded-[5px] bg-[#F2F4F7] dark:bg-[#1F2933] text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed">
+            Tu llave de cifrado se cambió en otro lugar (por ejemplo, abriendo ChatDos en el navegador). Escribe la{' '}
+            <strong>contraseña de respaldo que creaste en ese momento</strong>. Tus mensajes de antes se siguen viendo en este celular.
+          </div>
+        )}
 
         {errorMsg && (
           <div className="mb-4 p-3 rounded-[5px] bg-[#FDEBD3] text-[#B03030] text-xs font-['Inter'] flex items-start gap-2">
