@@ -62,6 +62,22 @@ export async function getLocalPrivateKey(userId: string): Promise<CryptoKey | nu
   return key;
 }
 
+export const YA_TIENE_LLAVE = 'Esta cuenta ya tiene una llave de cifrado.';
+
+/** ¿La cuenta ya tiene llave en el servidor? (null = no se pudo saber, por ejemplo sin internet) */
+export async function tieneLlaveEnServidor(userId: string): Promise<boolean | null> {
+  try {
+    const [{ data: perfil, error: e1 }, { data: respaldo, error: e2 }] = await Promise.all([
+      supabase.from('profiles').select('public_key').eq('id', userId).maybeSingle(),
+      supabase.from('key_backups').select('user_id').eq('user_id', userId).maybeSingle(),
+    ]);
+    if (e1 || e2 || !perfil) return null;
+    return !!perfil.public_key || !!respaldo;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Genera el par ECDH P-256 en el primer inicio de sesión:
  * 1. Sube la llave pública (JWK) a profiles.public_key.
@@ -69,9 +85,20 @@ export async function getLocalPrivateKey(userId: string): Promise<CryptoKey | nu
  * 3. Guarda el respaldo en key_backups.
  * 4. Guarda la llave privada en IndexedDB como no extraíble (extractable: false).
  */
-export async function generateAndBackupKeys(userId: string, backupPassword: string): Promise<void> {
+export async function generateAndBackupKeys(
+  userId: string,
+  backupPassword: string,
+  opciones: { reemplazar?: boolean } = {}
+): Promise<void> {
   if (!backupPassword || backupPassword.length < 8) {
     throw new Error('La contraseña de respaldo debe tener al menos 8 caracteres.');
+  }
+  // Protección: nunca crear una llave nueva encima de una que ya existe (se perderían los mensajes).
+  // Solo "empezar de nuevo" puede reemplazarla, y guarda la anterior.
+  if (!opciones.reemplazar) {
+    const yaTiene = await tieneLlaveEnServidor(userId);
+    if (yaTiene === null) throw new Error('Sin conexión. Revisa tu internet e intenta de nuevo.');
+    if (yaTiene) throw new Error(YA_TIENE_LLAVE);
   }
 
   // 1. Generar par de llaves ECDH P-256
@@ -649,7 +676,7 @@ export async function empezarDeNuevo(userId: string, nuevaContrasenaRespaldo: st
       .eq('id', userId);
     if (errGuardar) throw new Error('No se pudo guardar tu llave anterior. Intenta de nuevo.');
   }
-  await generateAndBackupKeys(userId, nuevaContrasenaRespaldo);
+  await generateAndBackupKeys(userId, nuevaContrasenaRespaldo, { reemplazar: true });
 }
 
 /** Llaves viejas de MI colección de stickers (si renové mi llave en este celular). */

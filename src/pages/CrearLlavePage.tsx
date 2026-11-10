@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldAlert, KeyRound, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { generateAndBackupKeys } from '../lib/crypto';
+import { generateAndBackupKeys, tieneLlaveEnServidor, YA_TIENE_LLAVE } from '../lib/crypto';
 import { CampoClave } from '../components/CampoClave';
 
 export const CrearLlavePage: React.FC = () => {
@@ -14,6 +14,15 @@ export const CrearLlavePage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [anotada, setAnotada] = useState(false);
+
+  // Si la cuenta ya tiene llave (por ejemplo, se borraron los datos del celular), no se crea otra:
+  // se pide la contraseña de respaldo para recuperar la misma llave y no perder los mensajes.
+  useEffect(() => {
+    if (!user) return;
+    tieneLlaveEnServidor(user.id).then((tiene) => {
+      if (tiene) navigate('/llave/recuperar', { replace: true });
+    });
+  }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +65,10 @@ export const CrearLlavePage: React.FC = () => {
         }
       }
     } catch (err: unknown) {
+      if (err instanceof Error && err.message === YA_TIENE_LLAVE) {
+        navigate('/llave/recuperar', { replace: true });
+        return;
+      }
       if (err instanceof Error) {
         setErrorMsg(err.message);
       } else {
