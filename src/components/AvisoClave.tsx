@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { KeyRound, RefreshCw, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { leerAvisoClave, ponerClaveTrasRestablecer } from '../lib/cuenta';
+import { leerAvisoClave, ponerClaveTrasRestablecer, recordarClave, ultimaClaveUsada } from '../lib/cuenta';
+import { getLocalPrivateKey, pasarRespaldoAContrasena } from '../lib/crypto';
 import { CampoClave } from './CampoClave';
 
 const campo =
@@ -53,6 +54,12 @@ export const AvisoClave: React.FC = () => {
     setTrabajando(true);
     try {
       await ponerClaveTrasRestablecer(user.id, nueva);
+      // La misma contraseña protege los mensajes: el respaldo de la llave pasa a la nueva
+      if (await getLocalPrivateKey(user.id)) {
+        const r = await pasarRespaldoAContrasena(user.id, ultimaClaveUsada(), nueva).catch(() => 'igual');
+        if (r === 'renovada') setTimeout(() => window.location.reload(), 800);
+      }
+      recordarClave(nueva);
       setCuando(null);
       setNueva('');
       setRepetir('');

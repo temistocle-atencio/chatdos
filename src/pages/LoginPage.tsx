@@ -4,12 +4,16 @@ import { LogIn, AlertCircle } from 'lucide-react';
 import { Logo } from '../components/Logo';
 import { useAuth } from '../context/AuthContext';
 import { CampoClave } from '../components/CampoClave';
+import { supabase } from '../lib/supabase';
+import { prepararLlaveConContrasena, registrarPreparacionLlave } from '../lib/crypto';
+import { recordarClave } from '../lib/cuenta';
 
 export const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [preparando, setPreparando] = useState(false);
 
   const { signIn } = useAuth();
   const navigate = useNavigate();
@@ -30,8 +34,17 @@ export const LoginPage: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      await signIn(cleanUser, password);
-      navigate('/chats', { replace: true });
+      // Con la misma contraseña se prepara la llave de cifrado (sin pedir otra contraseña)
+      const flujo = (async () => {
+        await signIn(cleanUser, password);
+        recordarClave(password);
+        setPreparando(true);
+        const uid = (await supabase.auth.getSession()).data.session?.user.id;
+        if (uid) await prepararLlaveConContrasena(uid, password).catch((e) => console.warn('[llave]', e));
+      })();
+      registrarPreparacionLlave(flujo);
+      await flujo;
+      navigate('/', { replace: true });
     } catch (err: unknown) {
       if (err instanceof Error) {
         setErrorMsg(err.message);
@@ -109,7 +122,7 @@ export const LoginPage: React.FC = () => {
             className="w-full h-12 mt-2 rounded-[5px] bg-[#F28C1B] text-[#1F2933] font-['Poppins'] font-semibold text-sm flex items-center justify-center gap-2 shadow-[0_2px_8px_rgba(0,0,0,0.08)] hover:brightness-105 active:scale-[0.99] transition-all disabled:opacity-70 disabled:cursor-not-allowed"
           >
             <LogIn className="w-4 h-4 text-[#1F2933]" strokeWidth={2} />
-            <span>{isSubmitting ? 'Iniciando sesión...' : 'Iniciar Sesión'}</span>
+            <span>{preparando ? 'Abriendo tus chats…' : isSubmitting ? 'Iniciando sesión...' : 'Iniciar Sesión'}</span>
           </button>
         </form>
       </div>

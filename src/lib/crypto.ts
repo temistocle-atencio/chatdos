@@ -63,6 +63,7 @@ export async function getLocalPrivateKey(userId: string): Promise<CryptoKey | nu
   return key;
 }
 
+export const CLAVE_INCORRECTA = 'Contraseña incorrecta. Verifica e inténtalo de nuevo.';
 export const YA_TIENE_LLAVE = 'Esta cuenta ya tiene una llave de cifrado.';
 
 /** ¿La cuenta ya tiene llave en el servidor? (null = no se pudo saber, por ejemplo sin internet) */
@@ -253,7 +254,7 @@ export async function restoreKeysFromBackup(userId: string, backupPassword: stri
       ciphertext as BufferSource
     );
   } catch {
-    throw new Error('Contraseña de respaldo incorrecta. Verifica e inténtalo de nuevo.');
+    throw new Error(CLAVE_INCORRECTA);
   }
 
   // 4. Importar como no extraíble (extractable: false)
@@ -770,4 +771,68 @@ export async function revisarLlaveLocal(userId: string): Promise<'ok' | 'distint
     console.warn('[cifrado] no se pudo revisar la llave', e);
     return 'desconocido';
   }
+}
+
+// ---------- Una sola contraseña ----------
+// La contraseña para entrar es la misma que protege la llave de cifrado. Al iniciar sesión se prepara
+// la llave sola: se recupera del respaldo o, si el respaldo tenía otra contraseña (de antes), se empieza
+// de nuevo con la de ahora guardando la anterior (la otra persona sigue leyendo todo).
+let preparacionEnCurso: Promise<unknown> | null = null;
+/** Marca que se está iniciando sesión y preparando la llave (para que nadie pida la contraseña mientras tanto). */
+export function registrarPreparacionLlave(p: Promise<unknown>) {
+  preparacionEnCurso = p;
+  p.finally(() => {
+    if (preparacionEnCurso === p) preparacionEnCurso = null;
+  }).catch(() => {});
+}
+/** Si se está preparando la llave justo después de iniciar sesión, espera a que termine. */
+export const esperarPreparacionLlave = () => preparacionEnCurso?.catch(() => {}) ?? Promise.resolve();
+
+export function prepararLlaveConContrasena(userId: string, contrasena: string): Promise<void> {
+  const p = prepararLlave(userId, contrasena).finally(() => {
+    if (preparacionEnCurso === p) preparacionEnCurso = null;
+  });
+  preparacionEnCurso = p;
+  return p;
+}
+
+async function prepararLlave(userId: string, contrasena: string): Promise<void> {
+  if (await getLocalPrivateKey(userId)) {
+    const r = await revisarLlaveLocal(userId);
+    if (r !== 'distinta') return; // 'ok' o sin internet: se sigue con la llave de este celular
+  }
+  const [{ data: perfil, error: e1 }, { data: respaldo, error: e2 }] = await Promise.all([
+    supabase.from('profiles').select('public_key').eq('id', userId).maybeSingle(),
+    supabase.from('key_backups').select('user_id').eq('user_id', userId).maybeSingle(),
+  ]);
+  if (e1 || e2 || !perfil) throw new Error('Sin conexión. Revisa tu internet e intenta de nuevo.');
+
+  if (!perfil.public_key && !respaldo) {
+    await generateAndBackupKeys(userId, contrasena); // primera vez
+    return;
+  }
+  if (respaldo) {
+    try {
+      await restoreKeysFromBackup(userId, contrasena);
+      return;
+    } catch (e) {
+      if (!(e instanceof Error) || e.message !== CLAVE_INCORRECTA) throw e;
+    }
+  }
+  // El respaldo estaba con otra contraseña (o no había): se empieza de nuevo con la de ahora
+  await empezarDeNuevo(userId, contrasena);
+}
+
+/** Al cambiar la contraseña: el respaldo de la llave pasa a la contraseña nueva. */
+export async function pasarRespaldoAContrasena(userId: string, anterior: string | null, nueva: string): Promise<'igual' | 'renovada'> {
+  if (anterior) {
+    try {
+      await changeBackupPassword(userId, anterior, nueva);
+      return 'igual';
+    } catch {
+      /* el respaldo tenía otra contraseña: se renueva abajo */
+    }
+  }
+  await empezarDeNuevo(userId, nueva);
+  return 'renovada';
 }

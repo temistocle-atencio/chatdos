@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { AtSign, KeyRound, ShieldCheck, ChevronRight, Eye, EyeOff, Info, Check } from 'lucide-react';
+import { AtSign, KeyRound, ChevronRight, Eye, EyeOff, Info, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { cambiarMiContrasena, cambiarMiRespaldo, cambiarMiUsuario } from '../lib/cuenta';
-import { RespaldoNuevo } from './RespaldoNuevo';
+import { cambiarMiContrasena, cambiarMiUsuario, recordarClave } from '../lib/cuenta';
+import { pasarRespaldoAContrasena } from '../lib/crypto';
 
-type Panel = 'usuario' | 'contrasena' | 'respaldo' | null;
+type Panel = 'usuario' | 'contrasena' | null;
 
 const campo =
   "w-full h-11 px-3 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] bg-white dark:bg-[#1F2933] text-sm font-['Inter'] text-[#1F2933] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#005198]";
@@ -51,7 +51,6 @@ export const MiCuenta: React.FC = () => {
   const [trabajando, setTrabajando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exito, setExito] = useState<string | null>(null);
-  const [olvideRespaldo, setOlvideRespaldo] = useState(false);
 
   if (!user || !profile) return null;
 
@@ -63,7 +62,6 @@ export const MiCuenta: React.FC = () => {
     setRepetir('');
     setError(null);
     setExito(null);
-    setOlvideRespaldo(false);
   };
 
   const correr = async (fn: () => Promise<string>) => {
@@ -96,16 +94,11 @@ export const MiCuenta: React.FC = () => {
     if (nueva !== repetir) return setError('Las dos contraseñas nuevas no son iguales.');
     correr(async () => {
       await cambiarMiContrasena(profile.username, actual, nueva);
-      return 'Listo. Tu contraseña para entrar cambió.';
-    });
-  };
-
-  const guardarRespaldo = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (nueva !== repetir) return setError('Las dos contraseñas nuevas no son iguales.');
-    correr(async () => {
-      await cambiarMiRespaldo(user.id, actual, nueva);
-      return 'Listo. Tu contraseña de respaldo cambió. Anótala en un lugar seguro: nadie te la puede recuperar.';
+      recordarClave(nueva);
+      // La misma contraseña protege tus mensajes: el respaldo de la llave pasa a la nueva
+      const r = await pasarRespaldoAContrasena(user.id, actual, nueva);
+      if (r === 'renovada') setTimeout(() => window.location.reload(), 1200);
+      return 'Listo. Tu contraseña cambió.';
     });
   };
 
@@ -146,7 +139,7 @@ export const MiCuenta: React.FC = () => {
         <p className="mt-2 mb-1 p-3 rounded-[5px] bg-[#F2F4F7] dark:bg-[#1F2933] text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed flex gap-2">
           <Info className="w-4 h-4 shrink-0 mt-0.5 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
           <span>
-            Tus contraseñas son solo tuyas: nadie más las puede ver, ni siquiera el administrador. Si olvidas la de entrar, él te puede dar una temporal y tú pones una nueva.
+            Tienes una sola contraseña: con ella entras y también protege tus mensajes cifrados. Es solo tuya, nadie más la puede ver, ni siquiera el administrador. Si la olvidas, él te puede dar una temporal y tú pones una nueva.
           </span>
         </p>
       )}
@@ -184,7 +177,7 @@ export const MiCuenta: React.FC = () => {
         </div>
 
         <div>
-          {fila('contrasena', KeyRound, 'Contraseña para entrar', 'La que usas al iniciar sesión')}
+          {fila('contrasena', KeyRound, 'Contraseña', 'Con ella entras y protege tus mensajes')}
           {abierto === 'contrasena' && (
             <form onSubmit={guardarContrasena} className="space-y-2 pb-4">
               <Clave valor={actual} onCambio={setActual} placeholder="Contraseña actual" auto="current-password" />
@@ -196,50 +189,6 @@ export const MiCuenta: React.FC = () => {
           )}
         </div>
 
-        <div>
-          {fila('respaldo', ShieldCheck, 'Contraseña de respaldo', 'Protege tus mensajes si cambias de celular')}
-          {abierto === 'respaldo' && (
-            olvideRespaldo ? (
-              <div className="space-y-2 pb-4">
-                <p className="text-[11px] font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed">
-                  Nadie puede recuperar la anterior, pero puedes crear una nueva. En este celular sigues viendo todos tus mensajes.
-                  Si algún día cambias de celular, allá verás los mensajes desde hoy (los de antes los sigue teniendo la otra persona).
-                </p>
-                <RespaldoNuevo
-                  onCancelar={() => setOlvideRespaldo(false)}
-                  onListo={() => {
-                    // Se recarga para usar la llave nueva en toda la app
-                    window.location.reload();
-                  }}
-                />
-              </div>
-            ) : (
-            <form onSubmit={guardarRespaldo} className="space-y-2 pb-4">
-              <p className="text-[11px] font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] leading-relaxed">
-                Es la que creaste para recuperar tus mensajes en otro celular. No es la misma con la que entras.
-              </p>
-              <p className="p-2.5 rounded-[5px] bg-[#FDEBD3] text-[11px] font-['Inter'] text-[#8A4B00] leading-relaxed">
-                <strong>No la olvides.</strong> Anótala en un lugar seguro. Nadie la puede recuperar, ni el administrador.
-              </p>
-              <Clave valor={actual} onCambio={setActual} placeholder="Contraseña de respaldo actual" auto="off" />
-              <Clave valor={nueva} onCambio={setNueva} placeholder="Nueva (mínimo 8 caracteres)" auto="off" />
-              <Clave valor={repetir} onCambio={setRepetir} placeholder="Repite la nueva" auto="off" />
-              {error && <p className="text-xs font-['Inter'] text-[#B03030]">{error}</p>}
-              {botonGuardar}
-              <button
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  setOlvideRespaldo(true);
-                }}
-                className="w-full pt-1 text-xs font-['Inter'] text-[#005198] dark:text-[#E3E7EC] underline underline-offset-2"
-              >
-                ¿La olvidaste?
-              </button>
-            </form>
-            )
-          )}
-        </div>
       </div>
     </div>
   );

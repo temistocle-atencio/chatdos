@@ -75,3 +75,11 @@ export async function ponerClaveTrasRestablecer(userId: string, nueva: string): 
   }
   await supabase.from('profiles').update({ clave_restablecida_at: null }).eq('id', userId);
 }
+
+// La última contraseña con la que se entró se guarda SOLO en memoria (nunca en el celular),
+// para pasar el respaldo de la llave a la contraseña nueva si el administrador la restablece.
+let ultimaClave: string | null = null;
+export const recordarClave = (c: string) => {
+  ultimaClave = c;
+};
+export const ultimaClaveUsada = () => ultimaClave;
