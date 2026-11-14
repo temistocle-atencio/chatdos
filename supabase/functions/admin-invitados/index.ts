@@ -137,7 +137,9 @@ Deno.serve(async (req) => {
       const clave = String(cuerpo.clave ?? '');
       if (clave.length < 8) return responder({ error: 'La contraseña debe tener al menos 8 caracteres' }, 400);
       const { error } = await servicio.auth.admin.updateUserById(invitadoId, { password: clave });
-      if (error) return responder({ error: 'No se pudo cambiar la contraseña' }, 500);
+      // Si es la misma que ya tenía, no es un error: queda puesta igual
+      const esLaMisma = (error?.message ?? '').toLowerCase().includes('different');
+      if (error && !esLaMisma) return responder({ error: 'No se pudo cambiar la contraseña' }, 500);
       await servicio.from('profiles').update({ clave_restablecida_at: new Date().toISOString() }).eq('id', invitadoId);
       return responder({ ok: true });
     }

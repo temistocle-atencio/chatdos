@@ -602,7 +602,7 @@ export async function llavesAnterioresDelChat(
   publicaActualDelOtro?: unknown
 ): Promise<CryptoKey[]> {
   const llaves: CryptoKey[] = [];
-  const delOtro = Array.isArray(anteriores) ? (anteriores.slice(-5).reverse() as JsonWebKey[]) : [];
+  const delOtro = Array.isArray(anteriores) ? (anteriores.slice(-200).reverse() as JsonWebKey[]) : [];
   // Llaves viejas de la otra persona con mi llave de ahora
   for (const pub of delOtro) {
     try {
@@ -615,7 +615,7 @@ export async function llavesAnterioresDelChat(
   if (userId) {
     const mias = await loadOwnOldKeys(userId);
     const publicas = [publicaActualDelOtro as JsonWebKey | undefined, ...delOtro].filter(Boolean) as JsonWebKey[];
-    for (const vieja of mias.slice(-5).reverse()) {
+    for (const vieja of mias.slice(-200).reverse()) {
       for (const pub of publicas) {
         try {
           llaves.push(await getChatKey(chatId, vieja.privateKey, pub));
@@ -685,7 +685,7 @@ export async function empezarDeNuevo(userId: string, nuevaContrasenaRespaldo: st
 export async function llavesAnterioresPropias(idLlave: string, userId: string): Promise<CryptoKey[]> {
   const mias = await loadOwnOldKeys(userId);
   const llaves: CryptoKey[] = [];
-  for (const vieja of mias.slice(-5).reverse()) {
+  for (const vieja of mias.slice(-200).reverse()) {
     try {
       llaves.push(await getChatKey(idLlave, vieja.privateKey, vieja.publicJwk));
     } catch {
