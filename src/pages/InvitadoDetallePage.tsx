@@ -13,7 +13,8 @@ import {
   Pencil,
   AtSign,
 } from 'lucide-react';
-import { cambiarUsuarioInvitado, restablecerClaveInvitado } from '../lib/cuenta';
+import { asignarClaveInvitado, cambiarUsuarioInvitado } from '../lib/cuenta';
+import { CampoClave } from '../components/CampoClave';
 import { supabase } from '../lib/supabase';
 import { AvatarImage } from '../components/AvatarImage';
 import type { Profile } from '../types/database';
@@ -32,10 +33,9 @@ export const InvitadoDetallePage: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Restablecer contraseña: el administrador nunca ve la de ella; solo una temporal, una vez
-  const [confirmarRestablecer, setConfirmarRestablecer] = useState(false);
-  const [restableciendo, setRestableciendo] = useState(false);
-  const [temporal, setTemporal] = useState<string | null>(null);
+  // Asignarle una contraseña (a ella le sale un aviso y la puede cambiar cuando quiera)
+  const [claveNueva, setClaveNueva] = useState('');
+  const [asignando, setAsignando] = useState(false);
 
   const [copiado, setCopiado] = useState<string | null>(null);
   const [editUsuario, setEditUsuario] = useState<string | null>(null);
@@ -123,19 +123,21 @@ export const InvitadoDetallePage: React.FC = () => {
     }
   };
 
-  const handleRestablecer = async () => {
+  const handleAsignar = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!id) return;
     setErrorMsg(null);
     setSuccessMsg(null);
-    setRestableciendo(true);
+    if (claveNueva.length < 8) return setErrorMsg('La contraseña debe tener al menos 8 caracteres.');
+    setAsignando(true);
     try {
-      setTemporal(await restablecerClaveInvitado(id));
-      setConfirmarRestablecer(false);
+      await asignarClaveInvitado(id, claveNueva);
+      setSuccessMsg('Contraseña cambiada. Dásela a ella: con esa entra de una vez.');
+      setClaveNueva('');
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'No se pudo restablecer la contraseña.');
-      setConfirmarRestablecer(false);
+      setErrorMsg(err instanceof Error ? err.message : 'No se pudo cambiar la contraseña.');
     } finally {
-      setRestableciendo(false);
+      setAsignando(false);
     }
   };
 
@@ -258,7 +260,7 @@ export const InvitadoDetallePage: React.FC = () => {
           <span>Usuario para entrar</span>
         </h3>
         <p className="text-[11px] text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mb-3">
-          Sus contraseñas son solo de ella: nadie más las puede ver.
+          Con este usuario y su contraseña entra a ChatDos.
         </p>
 
         {/* Usuario */}
@@ -334,80 +336,35 @@ export const InvitadoDetallePage: React.FC = () => {
         )}
       </div>
 
-      {/* Restablecer contraseña (si la olvidó) */}
+      {/* Asignarle una contraseña */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">
         <h3 className="font-['Poppins'] font-semibold text-sm text-[#003A73] dark:text-white uppercase tracking-wider flex items-center gap-2 mb-2">
           <KeyRound className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
-          <span>¿Olvidó su contraseña?</span>
+          <span>Ponerle una contraseña</span>
         </h3>
         <p className="text-xs text-[#5B6670] dark:text-[#E3E7EC] font-['Inter'] mb-3 leading-relaxed">
-          Puedes darle una contraseña temporal. Al entrar, la app le pedirá poner una nueva que solo ella conozca, y le
-          avisará que tú la restableciste. Sus mensajes no cambian.
+          Escribe la contraseña que va a usar y dásela. Entra directo con ella, y le sale un aviso de que tú se la pusiste.
+          Ella la puede cambiar cuando quiera. Mejor no cambiarla seguido: en un celular nuevo dejaría de ver sus mensajes de antes.
         </p>
-
-        {temporal ? (
-          <div className="p-3 rounded-[5px] bg-[#F2F4F7] dark:bg-[#1F2933] border border-[#E3E7EC] dark:border-[#003A73]">
-            <span className="block text-[10px] uppercase font-['Poppins'] text-[#5B6670] dark:text-[#E3E7EC]">Contraseña temporal</span>
-            <div className="flex items-center gap-1">
-              <span className="flex-1 min-w-0 break-all font-mono text-base font-semibold text-[#003A73] dark:text-white">{temporal}</span>
-              <button type="button" onClick={() => copiar(temporal, 'temporal')} className="p-2 text-[#5B6670] dark:text-[#E3E7EC]" aria-label="Copiar contraseña temporal">
-                {copiado === 'temporal' ? <Check className="w-4 h-4 text-[#1E7A44]" strokeWidth={2} /> : <Copy className="w-4 h-4" strokeWidth={2} />}
-              </button>
-            </div>
-            <p className="mt-1 text-[11px] font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] leading-relaxed">
-              Dásela a ella junto con su usuario. Solo se muestra esta vez.
-            </p>
-            <button
-              type="button"
-              onClick={() => setTemporal(null)}
-              className="mt-2 w-full h-10 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] text-[#5B6670] dark:text-[#E3E7EC] font-['Poppins'] font-semibold text-xs"
-            >
-              Listo, ya se la di
-            </button>
-          </div>
-        ) : (
+        <form onSubmit={handleAsignar} className="space-y-3">
+          <CampoClave
+            visibleInicial
+            value={claveNueva}
+            onChange={(e) => setClaveNueva(e.target.value)}
+            placeholder="Contraseña nueva (mínimo 8)"
+            autoComplete="off"
+            disabled={asignando}
+            className="w-full h-11 px-3 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] bg-white dark:bg-[#1F2933] text-sm font-mono text-[#1F2933] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#005198]"
+          />
           <button
-            type="button"
-            onClick={() => setConfirmarRestablecer(true)}
-            disabled={!profile.public_key}
-            className="w-full h-11 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-xs flex items-center justify-center gap-2 hover:bg-[#003A73] transition-colors disabled:opacity-60"
+            type="submit"
+            disabled={asignando}
+            className="w-full h-11 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-xs hover:bg-[#003A73] transition-colors disabled:opacity-60"
           >
-            <RefreshCw className="w-4 h-4" strokeWidth={2} />
-            <span>Restablecer contraseña</span>
+            {asignando ? 'Guardando…' : 'Guardar contraseña'}
           </button>
-        )}
+        </form>
       </div>
-
-      {confirmarRestablecer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !restableciendo && setConfirmarRestablecer(false)}>
-          <div
-            className="w-full max-w-sm rounded-[5px] bg-white dark:bg-[#253240] p-5 shadow-[0_2px_8px_rgba(0,0,0,0.15)] border border-[#E3E7EC] dark:border-[#003A73] space-y-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="font-['Poppins'] font-bold text-base text-[#003A73] dark:text-white">¿Restablecer su contraseña?</h3>
-            <p className="text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed">
-              Su contraseña actual dejará de funcionar. Te mostraremos una temporal para que se la des, y a ella le aparecerá
-              un aviso diciendo que tú la restableciste.
-            </p>
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={() => setConfirmarRestablecer(false)}
-                disabled={restableciendo}
-                className="flex-1 h-11 rounded-[5px] border border-[#C9CFD6] dark:border-[#003A73] text-[#5B6670] dark:text-[#E3E7EC] font-['Poppins'] font-semibold text-xs"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleRestablecer}
-                disabled={restableciendo}
-                className="flex-1 h-11 rounded-[5px] bg-[#005198] text-white font-['Poppins'] font-semibold text-xs disabled:opacity-60"
-              >
-                {restableciendo ? 'Restableciendo…' : 'Sí, restablecer'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Zona de peligro: Eliminar Invitado */}
       <div className="bg-white dark:bg-[#253240] p-5 rounded-[5px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] border border-[#E3E7EC] dark:border-[#003A73]">

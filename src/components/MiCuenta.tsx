@@ -139,7 +139,7 @@ export const MiCuenta: React.FC = () => {
         <p className="mt-2 mb-1 p-3 rounded-[5px] bg-[#F2F4F7] dark:bg-[#1F2933] text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] leading-relaxed flex gap-2">
           <Info className="w-4 h-4 shrink-0 mt-0.5 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
           <span>
-            Tienes una sola contraseña: con ella entras y también protege tus mensajes cifrados. Es solo tuya, nadie más la puede ver, ni siquiera el administrador. Si la olvidas, él te puede dar una temporal y tú pones una nueva.
+            Tienes una sola contraseña: con ella entras y también protege tus mensajes cifrados. Si la cambias aquí, solo tú la conoces. Si la olvidas, el administrador te puede poner una nueva (y la app te avisa cuando lo hace).
           </span>
         </p>
       )}

@@ -1,8 +1,7 @@
 // Edge Function "admin-invitados"
 // Solo el administrador la puede usar. Acciones:
 //   { accion: "crear", nombre, usuario, clave }      -> crea la cuenta y su chat con el administrador
-//   { accion: "restablecer_clave", invitado_id }     -> le pone una contraseña temporal (se devuelve una sola vez)
-//                                                       y la persona recibe un aviso para poner una nueva
+//   { accion: "asignar_clave", invitado_id, clave }  -> le pone una contraseña (a la persona le sale un aviso)
 //   { accion: "eliminar", invitado_id }              -> borra al invitado, su chat y sus archivos
 //   { accion: "cambiar_usuario", invitado_id, usuario } -> cambia el usuario de un invitado
 //   { accion: "vaciar_chat", invitado_id }           -> borra todos los mensajes y archivos del chat (para los dos)
@@ -131,17 +130,16 @@ Deno.serve(async (req) => {
     // ---------- CAMBIAR USUARIO DE UN INVITADO ----------
     if (accion === 'cambiar_usuario') return await cambiarUsuario(invitadoId, cuerpo.usuario);
 
-    // ---------- RESTABLECER CLAVE ----------
-    // El administrador nunca elige ni ve la contraseña de la persona: el servidor crea una temporal,
-    // se la muestra una sola vez para que se la dé, y a ella le aparece un aviso para poner una nueva.
-    if (accion === 'restablecer_clave') {
-      const letras = 'abcdefghjkmnpqrstuvwxyz23456789';
-      const azar = crypto.getRandomValues(new Uint8Array(10));
-      const temporal = Array.from(azar, (b) => letras[b % letras.length]).join('');
-      const { error } = await servicio.auth.admin.updateUserById(invitadoId, { password: temporal });
-      if (error) return responder({ error: 'No se pudo restablecer la contraseña' }, 500);
+    // ---------- ASIGNAR CLAVE ----------
+    // El administrador le pone una contraseña al invitado. A la persona le aparece un aviso
+    // (así nunca se cambia a escondidas) y la puede cambiar cuando quiera.
+    if (accion === 'asignar_clave') {
+      const clave = String(cuerpo.clave ?? '');
+      if (clave.length < 8) return responder({ error: 'La contraseña debe tener al menos 8 caracteres' }, 400);
+      const { error } = await servicio.auth.admin.updateUserById(invitadoId, { password: clave });
+      if (error) return responder({ error: 'No se pudo cambiar la contraseña' }, 500);
       await servicio.from('profiles').update({ clave_restablecida_at: new Date().toISOString() }).eq('id', invitadoId);
-      return responder({ ok: true, temporal });
+      return responder({ ok: true });
     }
 
     // Archivos del chat: media/<chat_id>/<user_id>/...

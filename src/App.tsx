@@ -18,6 +18,7 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { AppLock } from './components/AppLock';
 import { AvisoClave } from './components/AvisoClave';
 import { RevisarLlave } from './components/RevisarLlave';
+import { InstalarIOS } from './components/InstalarIOS';
 import { Logo } from './components/Logo';
 import { hasLocalPrivateKey } from './lib/crypto';
 import { memoria } from './lib/memoria';
@@ -171,6 +172,7 @@ export default function App() {
           <OfflineIndicator />
           <AvisoClave />
           <RevisarLlave />
+          <InstalarIOS />
           <AppLock />
         </HashRouter>
       </AuthProvider>

@@ -43,16 +43,14 @@ export async function cambiarMiContrasena(usuario: string, actual: string, nueva
 // ---------- Contraseña de respaldo ----------
 export const cambiarMiRespaldo = (userId: string, actual: string, nueva: string) => changeBackupPassword(userId, actual, nueva);
 
-// ---------- Restablecer (administrador) ----------
-/** Le pone una contraseña temporal al invitado. Se muestra una sola vez; a ella le llega un aviso. */
-export async function restablecerClaveInvitado(invitadoId: string): Promise<string> {
+// ---------- Asignar contraseña (administrador) ----------
+/** Le pone una contraseña al invitado. A ella le aparece un aviso y la puede cambiar cuando quiera. */
+export async function asignarClaveInvitado(invitadoId: string, clave: string): Promise<void> {
+  if (clave.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres.');
   const { data, error } = await supabase.functions.invoke('admin-invitados', {
-    body: { accion: 'restablecer_clave', invitado_id: invitadoId },
+    body: { accion: 'asignar_clave', invitado_id: invitadoId, clave },
   });
-  if (error || data?.error || !data?.temporal) {
-    throw new Error(data?.error || (await mensajeDeError(error)) || 'No se pudo restablecer la contraseña');
-  }
-  return data.temporal as string;
+  if (error || data?.error) throw new Error(data?.error || (await mensajeDeError(error)) || 'No se pudo cambiar la contraseña');
 }
 
 // ---------- Aviso de contraseña restablecida (invitado) ----------
@@ -61,18 +59,8 @@ export async function leerAvisoClave(userId: string): Promise<string | null> {
   return (data as { clave_restablecida_at?: string | null } | null)?.clave_restablecida_at ?? null;
 }
 
-/** Pone la contraseña nueva (que solo ella conoce) y quita el aviso. */
-export async function ponerClaveTrasRestablecer(userId: string, nueva: string): Promise<void> {
-  if (nueva.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres.');
-  const { error } = await supabase.auth.updateUser({ password: nueva });
-  if (error) {
-    const m = error.message.toLowerCase();
-    if (m.includes('different')) throw new Error('Pon una contraseña distinta a la temporal.');
-    if (m.includes('reauth') || m.includes('nonce') || m.includes('recent')) {
-      throw new Error('Por seguridad, cierra sesión y vuelve a entrar con la contraseña temporal que te dio el administrador.');
-    }
-    throw new Error('No se pudo guardar la contraseña. Revisa tu conexión.');
-  }
+/** La persona ya vio el aviso: se quita. */
+export async function quitarAvisoClave(userId: string): Promise<void> {
   await supabase.from('profiles').update({ clave_restablecida_at: null }).eq('id', userId);
 }
 
