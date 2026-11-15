@@ -123,7 +123,9 @@ export const EditorVideo: React.FC<{
   const [cuadros, setCuadros] = useState<string[]>([]);
   const [progreso, setProgreso] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const mov = useRef<'i' | 'f' | null>(null);
+  const mov = useRef<'i' | 'f' | 'cursor' | null>(null);
+  const [actual, setActual] = useState(0); // por dónde va el video (para el cursor de la tira)
+  const [cuantas, setCuantas] = useState(8); // miniaturas que caben en la tira
 
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
 
@@ -146,8 +148,9 @@ export const EditorVideo: React.FC<{
       c.height = 64;
       c.width = Math.round((64 * v.videoWidth) / Math.max(1, v.videoHeight));
       const lista: string[] = [];
-      for (let i = 0; i < 8 && vivo; i++) {
-        v.currentTime = Math.min(d - 0.05, (d * (i + 0.5)) / 8);
+      const n = cuantas;
+      for (let i = 0; i < n && vivo; i++) {
+        v.currentTime = Math.min(d - 0.05, (d * (i + 0.5)) / n);
         await new Promise<void>((ok) => {
           v.onseeked = () => ok();
           setTimeout(ok, 1500);
@@ -162,7 +165,46 @@ export const EditorVideo: React.FC<{
       v.removeAttribute('src');
       v.load();
     };
-  }, [url, duracion]);
+  }, [url, duracion, cuantas]);
+
+  // Cuántas miniaturas caben (una por cada ~44 px de tira)
+  useEffect(() => {
+    const b = barraRef.current;
+    if (!b) return;
+    const medir = () => setCuantas(Math.max(6, Math.min(20, Math.round(b.clientWidth / 44))));
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(b);
+    return () => ro.disconnect();
+  }, []);
+
+  // Cursor que avanza con el video
+  useEffect(() => {
+    const v = vRef.current;
+    if (!v) return;
+    let id = 0;
+    const paso = () => {
+      setActual(v.currentTime);
+      id = requestAnimationFrame(paso);
+    };
+    const empezar = () => {
+      cancelAnimationFrame(id);
+      id = requestAnimationFrame(paso);
+    };
+    const parar = () => {
+      cancelAnimationFrame(id);
+      setActual(v.currentTime);
+    };
+    v.addEventListener('play', empezar);
+    v.addEventListener('pause', parar);
+    v.addEventListener('seeked', parar);
+    return () => {
+      cancelAnimationFrame(id);
+      v.removeEventListener('play', empezar);
+      v.removeEventListener('pause', parar);
+      v.removeEventListener('seeked', parar);
+    };
+  }, []);
 
   // Reproducir solo el pedazo elegido
   useEffect(() => {
@@ -195,6 +237,13 @@ export const EditorVideo: React.FC<{
     if (!mov.current || !total) return;
     const t = tiempoEn(e.clientX);
     const minimo = Math.min(1, total);
+    if (mov.current === 'cursor') {
+      // Tocar o arrastrar sobre la tira: ir a ese momento (dentro del pedazo elegido)
+      const n = Math.max(inicio, Math.min(fin, t));
+      if (vRef.current) vRef.current.currentTime = n;
+      setActual(n);
+      return;
+    }
     if (mov.current === 'i') {
       const n = Math.min(t, fin - minimo);
       setInicio(Math.max(0, n));
@@ -239,7 +288,11 @@ export const EditorVideo: React.FC<{
       setCapa({ blob: b, url: URL.createObjectURL(b) });
     }, 'image/png');
   };
-  const pesoAprox = total ? (video.size * (fin - inicio)) / total : video.size;
+  // Peso al enviar: si no se cambia nada, el archivo va tal cual; si se recorta o se le agrega algo,
+  // se vuelve a grabar a ~1,4 Mb/s de video (+ 64 kb/s de audio), que es lo que define el peso.
+  const pesoAprox = !cambio
+    ? video.size
+    : ((1_400_000 + (sinSonido ? 0 : 64_000)) / 8) * (fin - inicio);
 
   const terminar = async () => {
     if (!cambio) return onCancelar();
@@ -259,7 +312,7 @@ export const EditorVideo: React.FC<{
   const pf = total ? (fin / total) * 100 : 100;
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black text-white flex flex-col select-none" style={{ touchAction: 'none' }}>
+    <div className="fixed inset-0 z-[80] bg-black text-white flex flex-col select-none animate-[aparecer_0.2s_ease-out]" style={{ touchAction: 'none' }}>
       <div className="shrink-0 flex items-center gap-2 px-3" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 10px)' }}>
         <button type="button" onClick={onCancelar} className="w-11 h-11 rounded-full bg-black/45 flex items-center justify-center" aria-label="Cancelar">
           <X className="w-6 h-6" strokeWidth={2} />
@@ -300,6 +353,12 @@ export const EditorVideo: React.FC<{
         <div
           ref={barraRef}
           className="relative h-14 mx-2"
+          onPointerDown={(e) => {
+            // Tocar la tira (fuera de los bordes) mueve el cursor
+            e.currentTarget.setPointerCapture(e.pointerId);
+            mov.current = 'cursor';
+            mover(e);
+          }}
           onPointerMove={mover}
           onPointerUp={() => (mov.current = null)}
           onPointerCancel={() => (mov.current = null)}
@@ -312,10 +371,19 @@ export const EditorVideo: React.FC<{
           <div className="absolute inset-y-0 left-0 bg-black/60" style={{ width: `${pi}%` }} />
           <div className="absolute inset-y-0 right-0 bg-black/60" style={{ width: `${100 - pf}%` }} />
           <div className="absolute inset-y-0 border-y-[3px] border-white" style={{ left: `${pi}%`, width: `${pf - pi}%` }} />
+          {/* Cursor: por dónde va el video */}
+          {total > 0 && (
+            <span
+              className="absolute -inset-y-1 w-[3px] -ml-[1.5px] rounded-full bg-[#F28C1B] shadow-[0_0_0_1px_rgba(0,0,0,0.4)] pointer-events-none z-[5]"
+              style={{ left: `${(Math.max(inicio, Math.min(fin, actual)) / total) * 100}%` }}
+              aria-hidden="true"
+            />
+          )}
           {(['i', 'f'] as const).map((h) => (
             <span
               key={h}
               onPointerDown={(e) => {
+                e.stopPropagation();
                 e.currentTarget.setPointerCapture(e.pointerId);
                 mov.current = h;
               }}
@@ -332,10 +400,11 @@ export const EditorVideo: React.FC<{
           ))}
         </div>
         <div className="mt-2 flex items-center gap-2">
-          <span className="px-3 h-7 rounded-full bg-black/55 text-xs font-['Inter'] flex items-center gap-1.5">
-            {formatDuration(fin - inicio)} <span aria-hidden>•</span> {formatBytes(pesoAprox)}
+          <span className="shrink-0 px-3 h-7 rounded-full bg-black/55 text-xs font-['Inter'] flex items-center gap-1.5 tabular-nums whitespace-nowrap">
+            {formatDuration(Math.max(0, actual - inicio))} / {formatDuration(fin - inicio)} <span aria-hidden>•</span> {cambio ? '≈ ' : ''}
+            {formatBytes(pesoAprox)}
           </span>
-          <span className="text-[11px] text-white/60">Mueve los bordes blancos para recortar</span>
+          <span className="text-[11px] text-white/60 truncate">Arrastra los bordes para recortar</span>
         </div>
       </div>
 

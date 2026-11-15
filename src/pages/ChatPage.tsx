@@ -1494,6 +1494,12 @@ export const ChatPage: React.FC = () => {
   };
 
   const MAX_A_LA_VEZ = 10;
+  // "+" del editor: elegir más fotos o videos y sumarlos a los que ya están
+  const sumarRef = useRef(false);
+  const agregarAlEditor = () => {
+    sumarRef.current = true;
+    galleryInputRef.current?.click();
+  };
   const handleFilePicked = async (files: FileList | File[] | null | undefined, forceAudio = false) => {
     setAttachOpen(false);
     const lista = Array.from(files ?? []);
@@ -1510,7 +1516,11 @@ export const ChatPage: React.FC = () => {
     }
     setPreparing(false);
     if (aviso) setToast(aviso);
-    if (listos.length) setPendingMedia(listos);
+    if (listos.length) {
+      if (sumarRef.current) setPendingMedia((l) => [...(l ?? []), ...listos].slice(0, MAX_A_LA_VEZ));
+      else setPendingMedia(listos);
+    }
+    sumarRef.current = false;
   };
 
   // Subir (cifrado) y guardar el mensaje. Sirve también para reintentar.
@@ -3612,6 +3622,16 @@ export const ChatPage: React.FC = () => {
           onCancel={() => setPendingMedia(null)}
           onRemove={(i) => setPendingMedia((l) => (l && l.length > 1 ? l.filter((_, j) => j !== i) : null))}
           onCambiar={(i, m) => setPendingMedia((l) => (l ? l.map((x, j) => (j === i ? m : x)) : l))}
+          onReordenar={(desde, hasta) =>
+            setPendingMedia((l) => {
+              if (!l) return l;
+              const n = l.slice();
+              const [m] = n.splice(desde, 1);
+              n.splice(hasta, 0, m);
+              return n;
+            })
+          }
+          onAgregar={pendingMedia.every((m) => m.kind !== 'audio') ? () => agregarAlEditor() : undefined}
           userId={user?.id}
           miLlavePublica={myProfile?.public_key}
           onSend={({ caption, viewOnce, hd }) => void enviarDelEditor(pendingMedia, caption, viewOnce, hd)}

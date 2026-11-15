@@ -1,12 +1,27 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Check, Undo2, RotateCcw, Trash2, Crop, Pencil, Type, Smile } from 'lucide-react';
+import { X, Check, Undo2, RotateCcw, Trash2, Crop, Pencil, Type, Smile, SlidersHorizontal, EyeOff } from 'lucide-react';
+import { FILTROS, SIN_AJUSTES, combinar, valoresSvg, aplicarAjustes, esNeutro, type Ajustes } from '../lib/filtrosFoto';
 import { IconoSticker } from './Iconos';
 import { SelectorStickers } from './SelectorStickers';
 
-// Editor de fotos antes de enviar (como WhatsApp): recortar y girar, dibujar, escribir y poner emojis.
+// Editor de fotos antes de enviar (como WhatsApp): recortar y girar, filtros y ajustes, dibujar,
+// ocultar (pixelar), escribir y poner emojis o stickers.
 // Todo se hace en el celular y el resultado es una foto nueva.
 
-export type HerramientaFoto = 'recortar' | 'dibujar' | 'texto' | 'emoji' | 'sticker';
+export type HerramientaFoto = 'recortar' | 'dibujar' | 'texto' | 'emoji' | 'sticker' | 'ajustes' | 'ocultar';
+
+type Pincel = 'marcador' | 'neon' | 'resaltador';
+const PINCELES: { id: Pincel; nombre: string }[] = [
+  { id: 'marcador', nombre: 'Marcador' },
+  { id: 'neon', nombre: 'Neón' },
+  { id: 'resaltador', nombre: 'Resaltador' },
+];
+// Fuentes del texto
+const FUENTES = [
+  { nombre: 'Clásica', css: (t: number) => `700 ${t}px Poppins, system-ui, sans-serif` },
+  { nombre: 'Elegante', css: (t: number) => `italic 700 ${t}px Georgia, "Times New Roman", serif` },
+  { nombre: 'Máquina', css: (t: number) => `700 ${t}px "Courier New", ui-monospace, monospace` },
+];
 
 const COLORES = ['#FFFFFF', '#1F2933', '#E5484D', '#F28C1B', '#FFD60A', '#1E9E5A', '#005198', '#C084FC'];
 const EMOJIS = ['😂', '❤️', '😍', '🥰', '😘', '😊', '😎', '🤩', '😜', '🤔', '😢', '😭', '😡', '🥳', '😴', '🤗', '👍', '👏', '🙌', '🙏', '💪', '🔥', '✨', '⭐', '🎉', '🎂', '🌹', '🌸', '☀️', '🌙', '💯', '💋', '👀', '😱', '🤣', '😇', '🐶', '🐱', '🍕', '☕'];
@@ -22,6 +37,9 @@ interface Trazo {
   color: string;
   grosor: number; // px de la foto
   puntos: { x: number; y: number }[];
+  pincel?: Pincel;
+  /** Pixela lo que hay debajo (para ocultar caras, placas o datos) */
+  ocultar?: boolean;
 }
 interface Pegado {
   id: string;
@@ -32,6 +50,8 @@ interface Pegado {
   x: number; // centro, px de la foto
   y: number;
   tam: number; // px de la foto
+  fuente?: number; // índice en FUENTES
+  fondo?: boolean; // texto sobre un recuadro de color
 }
 interface Caja {
   x: number;
@@ -40,7 +60,7 @@ interface Caja {
   h: number;
 }
 
-const FUENTE = (tam: number) => `700 ${tam}px Poppins, system-ui, sans-serif`;
+const FUENTE = (tam: number, fuente = 0) => (FUENTES[fuente] ?? FUENTES[0]).css(tam);
 const contraste = (hex: string) => {
   const n = parseInt(hex.slice(1), 16);
   const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
@@ -58,11 +78,25 @@ function pintarPegado(ctx: CanvasRenderingContext2D, p: Pegado) {
     ctx.font = `${p.tam}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
     ctx.fillText(p.valor, p.x, p.y);
   } else {
-    ctx.font = FUENTE(p.tam);
+    ctx.font = FUENTE(p.tam, p.fuente);
     const ls = p.valor.split('\n');
     const alto = p.tam * 1.15;
+    if (p.fondo) {
+      // Recuadro de color detrás del texto (el texto va en el color que contrasta)
+      const { w, h } = medirPegado(ctx, p);
+      ctx.fillStyle = p.color;
+      const r = p.tam * 0.3;
+      ctx.beginPath();
+      ctx.roundRect(p.x - w / 2, p.y - h / 2 - p.tam * 0.08, w, h + p.tam * 0.16, r);
+      ctx.fill();
+    }
     ls.forEach((l, i) => {
       const y = p.y + (i - (ls.length - 1) / 2) * alto;
+      if (p.fondo) {
+        ctx.fillStyle = contraste(p.color);
+        ctx.fillText(l, p.x, y);
+        return;
+      }
       ctx.lineJoin = 'round';
       ctx.lineWidth = Math.max(2, p.tam / 7);
       ctx.strokeStyle = contraste(p.color);
@@ -74,14 +108,47 @@ function pintarPegado(ctx: CanvasRenderingContext2D, p: Pegado) {
   ctx.restore();
 }
 
+function caminoTrazo(ctx: CanvasRenderingContext2D, t: Trazo) {
+  ctx.beginPath();
+  ctx.moveTo(t.puntos[0].x, t.puntos[0].y);
+  if (t.puntos.length === 1) ctx.lineTo(t.puntos[0].x + 0.01, t.puntos[0].y);
+  else for (const p of t.puntos.slice(1)) ctx.lineTo(p.x, p.y);
+}
+
 function pintarTrazo(ctx: CanvasRenderingContext2D, t: Trazo) {
-  if (!t.puntos.length) return;
+  if (!t.puntos.length || t.ocultar) return;
   ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (t.pincel === 'neon') {
+    // Neón: halo del color y centro blanco
+    ctx.shadowColor = t.color;
+    ctx.shadowBlur = t.grosor * 1.6;
+    ctx.strokeStyle = t.color;
+    ctx.lineWidth = t.grosor;
+    caminoTrazo(ctx, t);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = t.grosor * 0.4;
+    caminoTrazo(ctx, t);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  if (t.pincel === 'resaltador') {
+    ctx.globalAlpha = 0.4;
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = t.color;
+    ctx.lineWidth = t.grosor * 2.2;
+    caminoTrazo(ctx, t);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   ctx.strokeStyle = t.color;
   ctx.fillStyle = t.color;
   ctx.lineWidth = t.grosor;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
   ctx.beginPath();
   ctx.moveTo(t.puntos[0].x, t.puntos[0].y);
   if (t.puntos.length === 1) {
@@ -94,10 +161,44 @@ function pintarTrazo(ctx: CanvasRenderingContext2D, t: Trazo) {
   ctx.restore();
 }
 
+/**
+ * Pixela las zonas pintadas con "ocultar": se hace una versión de la foto en cuadritos
+ * grandes y se deja ver solo donde se pasó el dedo.
+ */
+function pintarOcultos(ctx: CanvasRenderingContext2D, fuente: HTMLCanvasElement, trazos: Trazo[]) {
+  const ocultos = trazos.filter((t) => t.ocultar && t.puntos.length);
+  if (!ocultos.length) return;
+  const w = fuente.width;
+  const h = fuente.height;
+  const cuadro = Math.max(8, Math.round(Math.min(w, h) / 45));
+  const chico = document.createElement('canvas');
+  chico.width = Math.max(1, Math.ceil(w / cuadro));
+  chico.height = Math.max(1, Math.ceil(h / cuadro));
+  chico.getContext('2d')!.drawImage(fuente, 0, 0, chico.width, chico.height);
+  const capa = document.createElement('canvas');
+  capa.width = w;
+  capa.height = h;
+  const c = capa.getContext('2d')!;
+  // Dónde se pasó el dedo
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  c.strokeStyle = '#000';
+  for (const t of ocultos) {
+    c.lineWidth = t.grosor;
+    caminoTrazo(c, t);
+    c.stroke();
+  }
+  // Ahí, la foto en cuadritos
+  c.globalCompositeOperation = 'source-in';
+  c.imageSmoothingEnabled = false;
+  c.drawImage(chico, 0, 0, chico.width * cuadro, chico.height * cuadro);
+  ctx.drawImage(capa, 0, 0);
+}
+
 function medirPegado(ctx: CanvasRenderingContext2D, p: Pegado) {
   if (p.tipo === 'sticker' && p.img) return { w: p.tam, h: (p.tam * p.img.naturalHeight) / Math.max(1, p.img.naturalWidth) };
   if (p.tipo === 'emoji') return { w: p.tam * 1.1, h: p.tam * 1.1 };
-  ctx.font = FUENTE(p.tam);
+  ctx.font = FUENTE(p.tam, p.fuente);
   const ls = p.valor.split('\n');
   return { w: Math.max(...ls.map((l) => ctx.measureText(l).width)) + p.tam * 0.3, h: ls.length * p.tam * 1.15 };
 }
@@ -123,6 +224,12 @@ export const EditorFoto: React.FC<{
   capa?: boolean;
 }> = ({ imagen, herramienta, onCancelar, onListo, userId, miLlavePublica, capa = false }) => {
   const [stickers, setStickers] = useState(herramienta === 'sticker');
+  // Filtro y ajustes de color (se aplican al guardar; en pantalla con un filtro SVG idéntico)
+  const [filtro, setFiltro] = useState('original');
+  const [extra, setExtra] = useState<Ajustes>(SIN_AJUSTES);
+  const [pestanaAjustes, setPestanaAjustes] = useState<'filtros' | 'ajustes'>('filtros');
+  const [pincel, setPincel] = useState<Pincel>('marcador');
+  const [miniatura, setMiniatura] = useState('');
   const [modo, setModo] = useState<HerramientaFoto | 'ver'>(
     herramienta === 'texto' || herramienta === 'emoji' || herramienta === 'sticker' ? 'ver' : herramienta
   );
@@ -138,8 +245,8 @@ export const EditorFoto: React.FC<{
   const [grosor, setGrosor] = useState(8); // px de pantalla
   const [recorte, setRecorte] = useState<Caja | null>(null);
   const [proporcion, setProporcion] = useState<number | null>(null);
-  const [escribiendo, setEscribiendo] = useState<{ id: string | null; texto: string; color: string } | null>(
-    herramienta === 'texto' ? { id: null, texto: '', color: '#FFFFFF' } : null
+  const [escribiendo, setEscribiendo] = useState<{ id: string | null; texto: string; color: string; fuente: number; fondo: boolean } | null>(
+    herramienta === 'texto' ? { id: null, texto: '', color: '#FFFFFF', fuente: 0, fondo: false } : null
   );
   const [emojis, setEmojis] = useState(herramienta === 'emoji');
   const [version, setVersion] = useState(0);
@@ -166,6 +273,22 @@ export const EditorFoto: React.FC<{
     };
   }, [imagen]);
 
+  // Miniatura de la foto para la tira de filtros
+  useEffect(() => {
+    const base = baseRef.current;
+    if (!base || !tam.w) return;
+    const lado = 120;
+    const k = lado / Math.min(tam.w, tam.h);
+    const c = document.createElement('canvas');
+    c.width = lado;
+    c.height = lado;
+    c.getContext('2d')!.drawImage(base, (lado - tam.w * k) / 2, (lado - tam.h * k) / 2, tam.w * k, tam.h * k);
+    setMiniatura(c.toDataURL('image/jpeg', 0.7));
+  }, [tam]);
+
+  const ajustesFinales = combinar(FILTROS.find((f) => f.id === filtro)?.a ?? SIN_AJUSTES, extra);
+  const conColor = !capa && !esNeutro(ajustesFinales);
+
   // Ajustar a la pantalla
   const ajustar = useCallback(() => {
     const caja = cajaRef.current;
@@ -189,6 +312,7 @@ export const EditorFoto: React.FC<{
     v.height = tam.h;
     const ctx = v.getContext('2d')!;
     ctx.drawImage(base, 0, 0);
+    pintarOcultos(ctx, base, dibujando.current ? [...trazos, dibujando.current] : trazos);
     trazos.forEach((t) => pintarTrazo(ctx, t));
     if (dibujando.current) pintarTrazo(ctx, dibujando.current);
     pegados.forEach((p) => {
@@ -211,6 +335,7 @@ export const EditorFoto: React.FC<{
     const base = baseRef.current;
     if (!base || (!trazos.length && !pegados.length)) return;
     const ctx = base.getContext('2d')!;
+    pintarOcultos(ctx, base, trazos);
     trazos.forEach((t) => pintarTrazo(ctx, t));
     pegados.forEach((p) => pintarPegado(ctx, p));
     setTrazos([]);
@@ -222,7 +347,11 @@ export const EditorFoto: React.FC<{
     if (modo === 'recortar' && tam.w) {
       aplanar();
       setRecorte({ x: 0, y: 0, w: tam.w, h: tam.h });
-    } else setRecorte(null);
+    } else {
+      setRecorte(null);
+      baseAntesRef.current = null;
+      setGrados(0);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modo, tam.w]);
 
@@ -264,7 +393,10 @@ export const EditorFoto: React.FC<{
     }
     setElegido(null);
     if (modo === 'dibujar') {
-      dibujando.current = { color, grosor: grosor / escala, puntos: [pt] };
+      dibujando.current = { color, grosor: grosor / escala, puntos: [pt], pincel };
+      setVersion((v) => v + 1);
+    } else if (modo === 'ocultar') {
+      dibujando.current = { color: '#000', grosor: (grosor * 4) / escala, puntos: [pt], ocultar: true };
       setVersion((v) => v + 1);
     }
   };
@@ -371,6 +503,41 @@ export const EditorFoto: React.FC<{
     setTam({ w: c.width, h: c.height });
   };
 
+  // Enderezar: girar unos grados (−15 a 15) y recortar los bordes vacíos.
+  // Se parte siempre de la foto de antes de enderezar, para no degradarla al mover la barra.
+  const [grados, setGrados] = useState(0);
+  const baseAntesRef = useRef<HTMLCanvasElement | null>(null);
+  const enderezar = (g: number) => {
+    if (!baseAntesRef.current) baseAntesRef.current = baseRef.current;
+    const base = baseAntesRef.current;
+    if (!base) return;
+    setGrados(g);
+    if (!g) {
+      baseRef.current = base;
+      setTam({ w: base.width, h: base.height });
+      setRecorte({ x: 0, y: 0, w: base.width, h: base.height });
+      return;
+    }
+    const rad = (Math.abs(g) * Math.PI) / 180;
+    const w = base.width;
+    const h = base.height;
+    // El rectángulo más grande con la misma proporción que cabe dentro de la foto girada
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const k = Math.min(w / (w * cos + h * sin), h / (w * sin + h * cos));
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * k);
+    c.height = Math.round(h * k);
+    const ctx = c.getContext('2d')!;
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate((g * Math.PI) / 180);
+    ctx.drawImage(base, -w / 2, -h / 2);
+    baseRef.current = c;
+    setTam({ w: c.width, h: c.height });
+    setRecorte({ x: 0, y: 0, w: c.width, h: c.height });
+    setProporcion(null);
+  };
+
   const girar = () => {
     const base = baseRef.current;
     if (!base) return;
@@ -384,6 +551,8 @@ export const EditorFoto: React.FC<{
     ctx.rotate(-Math.PI / 2);
     ctx.drawImage(b, 0, 0);
     baseRef.current = c;
+    baseAntesRef.current = null;
+    setGrados(0);
     setTam({ w: c.width, h: c.height });
     setRecorte({ x: 0, y: 0, w: c.width, h: c.height });
     setProporcion(null);
@@ -396,12 +565,17 @@ export const EditorFoto: React.FC<{
     if (!e) return;
     const texto = e.texto.trim();
     if (e.id) {
-      setPegados((l) => (texto ? l.map((p) => (p.id === e.id ? { ...p, valor: texto, color: e.color } : p)) : l.filter((p) => p.id !== e.id)));
+      setPegados((l) =>
+        texto ? l.map((p) => (p.id === e.id ? { ...p, valor: texto, color: e.color, fuente: e.fuente, fondo: e.fondo } : p)) : l.filter((p) => p.id !== e.id)
+      );
       return;
     }
     if (!texto) return;
     const id = crypto.randomUUID();
-    setPegados((l) => [...l, { id, tipo: 'texto', valor: texto, color: e.color, x: tam.w / 2, y: tam.h / 2, tam: Math.max(24, Math.min(tam.w, tam.h) / 10) }]);
+    setPegados((l) => [
+      ...l,
+      { id, tipo: 'texto', valor: texto, color: e.color, fuente: e.fuente, fondo: e.fondo, x: tam.w / 2, y: tam.h / 2, tam: Math.max(24, Math.min(tam.w, tam.h) / 10) },
+    ]);
     setElegido(id);
   };
 
@@ -437,9 +611,13 @@ export const EditorFoto: React.FC<{
       c.width = b.width;
       c.height = b.height;
       const ctx = c.getContext('2d')!;
-      if (!capa) ctx.drawImage(b, 0, 0);
+      if (!capa) {
+        ctx.drawImage(b, 0, 0);
+        pintarOcultos(ctx, b, trazos);
+      }
       trazos.forEach((t) => pintarTrazo(ctx, t));
       pegados.forEach((p) => pintarPegado(ctx, p));
+      if (!capa) aplicarAjustes(c, ajustesFinales);
       if (capa) c.toBlob((bl) => bl && onListo(bl), 'image/png');
       else c.toBlob((bl) => bl && onListo(bl), 'image/jpeg', 0.92);
     }, 30);
@@ -451,7 +629,7 @@ export const EditorFoto: React.FC<{
       onClick={() => {
         if (h === 'texto') {
           setModo('ver');
-          setEscribiendo({ id: null, texto: '', color: '#FFFFFF' });
+          setEscribiendo({ id: null, texto: '', color: '#FFFFFF', fuente: 0, fondo: false });
         } else if (h === 'emoji') {
           setModo('ver');
           setEmojis(true);
@@ -460,7 +638,7 @@ export const EditorFoto: React.FC<{
           setStickers(true);
         } else setModo(modo === h ? 'ver' : h);
       }}
-      className={`w-11 h-11 rounded-full flex items-center justify-center ${modo === h ? 'bg-white text-[#1F2933]' : 'bg-black/45 text-white'}`}
+      className={`w-11 h-11 shrink-0 rounded-full flex items-center justify-center transition-colors ${modo === h ? 'bg-white text-[#1F2933]' : 'bg-black/45 text-white'}`}
       aria-label={etiqueta}
       title={etiqueta}
     >
@@ -472,14 +650,14 @@ export const EditorFoto: React.FC<{
   const H = tam.h * escala;
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black text-white flex flex-col select-none" style={{ touchAction: 'none' }}>
+    <div className="fixed inset-0 z-[80] bg-black text-white flex flex-col select-none animate-[aparecer_0.2s_ease-out]" style={{ touchAction: 'none' }}>
       {/* Arriba */}
-      <div className="shrink-0 flex items-center gap-2 px-3" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 10px)', paddingBottom: 10 }}>
-        <button type="button" onClick={onCancelar} className="w-11 h-11 rounded-full bg-black/45 flex items-center justify-center" aria-label="Cancelar">
+      <div className="shrink-0 flex items-center gap-1.5 px-3 overflow-x-auto [scrollbar-width:none]" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 10px)', paddingBottom: 10 }}>
+        <button type="button" onClick={onCancelar} className="w-11 h-11 shrink-0 rounded-full bg-black/45 flex items-center justify-center" aria-label="Cancelar">
           <X className="w-6 h-6" strokeWidth={2} />
         </button>
         <div className="flex-1" />
-        {(trazos.length > 0 || dibujando.current) && modo === 'dibujar' && (
+        {(trazos.length > 0 || dibujando.current) && (modo === 'dibujar' || modo === 'ocultar') && (
           <button
             type="button"
             onClick={() => setTrazos((l) => l.slice(0, -1))}
@@ -489,16 +667,59 @@ export const EditorFoto: React.FC<{
             <Undo2 className="w-5 h-5" strokeWidth={2} />
           </button>
         )}
+        {!capa && herramientaBtn('ajustes', SlidersHorizontal, 'Filtros y ajustes')}
         {!capa && herramientaBtn('recortar', Crop, 'Recortar y girar')}
+        {!capa && herramientaBtn('ocultar', EyeOff, 'Ocultar (pixelar)')}
         {userId && herramientaBtn('sticker', IconoSticker, 'Stickers')}
         {herramientaBtn('emoji', Smile, 'Emojis')}
         {herramientaBtn('texto', Type, 'Texto')}
         {herramientaBtn('dibujar', Pencil, 'Dibujar')}
       </div>
 
+      {/* Ocultar: grosor del pincel */}
+      {modo === 'ocultar' && (
+        <div className="shrink-0 flex items-center justify-center gap-3 pb-2 text-xs font-['Inter'] text-white/80">
+          Pasa el dedo por lo que quieras ocultar
+          <input
+            type="range"
+            min={3}
+            max={24}
+            value={grosor}
+            onChange={(e) => setGrosor(Number(e.target.value))}
+            className="w-24 accent-white"
+            aria-label="Tamaño del pincel"
+          />
+        </div>
+      )}
+
       {/* Colores (dibujar) */}
       {modo === 'dibujar' && (
-        <div className="shrink-0 flex items-center justify-center gap-2 pb-2">
+        <div className="shrink-0 flex justify-center gap-1.5 pb-2">
+          {PINCELES.map((pc) => (
+            <button
+              key={pc.id}
+              type="button"
+              onClick={() => setPincel(pc.id)}
+              className={`h-8 px-3 rounded-full text-xs font-['Inter'] ${pincel === pc.id ? 'bg-white text-[#1F2933]' : 'bg-white/15 text-white'}`}
+              aria-pressed={pincel === pc.id}
+            >
+              {pc.nombre}
+            </button>
+          ))}
+        </div>
+      )}
+      {modo === 'dibujar' && (
+        <div className="shrink-0 flex items-center justify-center gap-2 pb-2 px-2 flex-wrap">
+          {/* Cualquier color: tocar o arrastrar sobre el arcoíris */}
+          <input
+            type="range"
+            min={0}
+            max={360}
+            onChange={(e) => setColor(`hsl(${e.target.value} 90% 55%)`)}
+            className="w-24 h-3 rounded-full appearance-none cursor-pointer"
+            style={{ background: 'linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)' }}
+            aria-label="Elegir cualquier color"
+          />
           {COLORES.map((c) => (
             <button
               key={c}
@@ -525,16 +746,27 @@ export const EditorFoto: React.FC<{
       <div ref={cajaRef} className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden">
         {!tam.w && <span className="text-sm text-white/70">Abriendo la foto…</span>}
         <div className="relative" style={{ width: W, height: H }}>
+          {/* El mismo filtro que se aplica al guardar, en vivo */}
+          <svg width="0" height="0" className="absolute" aria-hidden="true">
+            <filter id="editor-color" colorInterpolationFilters="sRGB">
+              <feColorMatrix type="matrix" values={valoresSvg(ajustesFinales)} />
+            </filter>
+            {FILTROS.map((f) => (
+              <filter key={f.id} id={`editor-filtro-${f.id}`} colorInterpolationFilters="sRGB">
+                <feColorMatrix type="matrix" values={valoresSvg(f.a)} />
+              </filter>
+            ))}
+          </svg>
           <canvas
             ref={vistaRef}
-            style={{ width: W, height: H, touchAction: 'none' }}
+            style={{ width: W, height: H, touchAction: 'none', filter: conColor ? 'url(#editor-color)' : undefined }}
             onPointerDown={alBajar}
             onPointerMove={alMover}
             onPointerUp={alSubir}
             onPointerCancel={alSubir}
             onDoubleClick={(e) => {
               const p = pegadoEn(aFoto(e));
-              if (p?.tipo === 'texto') setEscribiendo({ id: p.id, texto: p.valor, color: p.color });
+              if (p?.tipo === 'texto') setEscribiendo({ id: p.id, texto: p.valor, color: p.color, fuente: p.fuente ?? 0, fondo: !!p.fondo });
             }}
           />
           {/* Marco de recorte */}
@@ -593,9 +825,111 @@ export const EditorFoto: React.FC<{
 
       {/* Abajo: opciones de la herramienta */}
       <div className="shrink-0 px-3 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}>
-        {modo === 'recortar' ? (
+        {modo === 'ajustes' ? (
+          <div className="flex flex-col gap-2">
+            <div className="flex justify-center gap-1.5">
+              {(['filtros', 'ajustes'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setPestanaAjustes(t)}
+                  className={`h-8 px-4 rounded-full text-xs font-['Inter'] ${pestanaAjustes === t ? 'bg-white text-[#1F2933]' : 'bg-white/15'}`}
+                >
+                  {t === 'filtros' ? 'Filtros' : 'Ajustes'}
+                </button>
+              ))}
+            </div>
+            {pestanaAjustes === 'filtros' ? (
+              <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+                {FILTROS.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setFiltro(f.id)}
+                    className="shrink-0 flex flex-col items-center gap-1"
+                    aria-pressed={filtro === f.id}
+                  >
+                    <span className={`block w-16 h-16 rounded-[8px] overflow-hidden border-2 ${filtro === f.id ? 'border-[#F28C1B]' : 'border-transparent'}`}>
+                      {miniatura && (
+                        <img src={miniatura} alt="" className="w-full h-full object-cover" style={{ filter: `url(#editor-filtro-${f.id})` }} />
+                      )}
+                    </span>
+                    <span className={`text-[11px] font-['Inter'] ${filtro === f.id ? 'text-[#F28C1B]' : 'text-white/85'}`}>{f.nombre}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1.5 text-xs font-['Inter']">
+                {(
+                  [
+                    ['brillo', 'Brillo', 0.6, 1.4],
+                    ['contraste', 'Contraste', 0.6, 1.5],
+                    ['saturacion', 'Saturación', 0, 2],
+                    ['calidez', 'Calidez', -1, 1],
+                  ] as const
+                ).map(([k, nombre, min, max]) => {
+                  const v = extra[k];
+                  const neutro = k === 'calidez' ? 0 : 1;
+                  const pct = Math.round(((v - neutro) / (v >= neutro ? max - neutro : neutro - min)) * 100);
+                  return (
+                    <React.Fragment key={k}>
+                      <span className="text-white/85 w-[70px]">{nombre}</span>
+                      <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        step={0.01}
+                        value={v}
+                        onChange={(e) => setExtra((a) => ({ ...a, [k]: Number(e.target.value) }))}
+                        onDoubleClick={() => setExtra((a) => ({ ...a, [k]: neutro }))}
+                        className="w-full accent-[#F28C1B]"
+                        aria-label={nombre}
+                      />
+                      <span className="w-9 text-right tabular-nums text-white/70">{pct > 0 ? `+${pct}` : pct}</span>
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex justify-between items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setFiltro('original');
+                  setExtra(SIN_AJUSTES);
+                }}
+                className="h-10 px-4 rounded-full bg-white/15 text-xs font-['Inter']"
+              >
+                Quitar todo
+              </button>
+              <button
+                type="button"
+                onClick={() => setModo('ver')}
+                className="h-10 px-5 rounded-full bg-[#F28C1B] text-[#1F2933] font-['Poppins'] font-semibold text-sm"
+              >
+                Aplicar
+              </button>
+            </div>
+          </div>
+        ) : modo === 'recortar' ? (
+          <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-3 px-1 text-xs font-['Inter'] text-white/85">
+            <span className="w-[70px]">Enderezar</span>
+            <input
+              type="range"
+              min={-15}
+              max={15}
+              step={0.5}
+              value={grados}
+              onChange={(e) => enderezar(Number(e.target.value))}
+              onDoubleClick={() => enderezar(0)}
+              className="flex-1 accent-[#F28C1B]"
+              aria-label="Enderezar"
+            />
+            <span className="w-10 text-right tabular-nums text-white/70">{grados > 0 ? `+${grados}°` : `${grados}°`}</span>
+          </div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={girar} className="w-11 h-11 rounded-full bg-white/15 flex items-center justify-center shrink-0" aria-label="Girar">
+            <button type="button" onClick={girar} className="w-11 h-11 rounded-full bg-white/15 flex items-center justify-center shrink-0" aria-label="Girar 90 grados">
               <RotateCcw className="w-5 h-5" strokeWidth={2} />
             </button>
             <div className="flex-1 flex gap-1.5 overflow-x-auto">
@@ -621,6 +955,7 @@ export const EditorFoto: React.FC<{
               Recortar
             </button>
           </div>
+          </div>
         ) : (
           <div className="flex items-center gap-2">
             <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto">
@@ -638,7 +973,7 @@ export const EditorFoto: React.FC<{
               {sel?.tipo === 'texto' && (
                 <button
                   type="button"
-                  onClick={() => setEscribiendo({ id: sel.id, texto: sel.valor, color: sel.color })}
+                  onClick={() => setEscribiendo({ id: sel.id, texto: sel.valor, color: sel.color, fuente: sel.fuente ?? 0, fondo: !!sel.fondo })}
                   className="h-9 px-3 shrink-0 rounded-full bg-white/15 text-xs"
                 >
                   Editar
@@ -673,11 +1008,31 @@ export const EditorFoto: React.FC<{
 
       {/* Escribir un texto */}
       {escribiendo && (
-        <div className="absolute inset-0 z-10 bg-black/70 flex flex-col">
+        <div className="absolute inset-0 z-10 bg-black/90 flex flex-col animate-[aparecer_0.15s_ease-out]">
           <div className="flex items-center justify-between px-3" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 10px)' }}>
             <button type="button" onClick={() => setEscribiendo(null)} className="w-11 h-11 flex items-center justify-center" aria-label="Cancelar">
               <X className="w-6 h-6" strokeWidth={2} />
             </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setEscribiendo({ ...escribiendo, fuente: (escribiendo.fuente + 1) % FUENTES.length })}
+                className="h-10 px-3 rounded-full bg-white/15 text-sm"
+                style={{ font: FUENTE(15, escribiendo.fuente) }}
+                aria-label={`Fuente: ${FUENTES[escribiendo.fuente].nombre}. Toca para cambiarla`}
+              >
+                {FUENTES[escribiendo.fuente].nombre}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEscribiendo({ ...escribiendo, fondo: !escribiendo.fondo })}
+                className={`h-10 w-10 rounded-[8px] text-base font-bold ${escribiendo.fondo ? 'bg-white text-[#1F2933]' : 'border-2 border-white/70'}`}
+                aria-pressed={escribiendo.fondo}
+                aria-label="Fondo detrás del texto"
+              >
+                A
+              </button>
+            </div>
             <button type="button" onClick={guardarTexto} className="h-10 px-4 rounded-full bg-white text-[#1F2933] font-['Poppins'] font-semibold text-sm">
               Listo
             </button>
@@ -689,8 +1044,13 @@ export const EditorFoto: React.FC<{
               onChange={(e) => setEscribiendo({ ...escribiendo, texto: e.target.value.slice(0, 200) })}
               rows={3}
               placeholder="Escribe aquí"
-              className="w-full bg-transparent text-center text-3xl font-['Poppins'] font-bold resize-none focus:outline-none placeholder-white/40"
-              style={{ color: escribiendo.color, textShadow: `0 0 3px ${contraste(escribiendo.color)}` }}
+              className="w-full text-center text-3xl resize-none focus:outline-none placeholder-white/40 rounded-[12px] px-2"
+              style={{
+                font: FUENTE(30, escribiendo.fuente),
+                ...(escribiendo.fondo
+                  ? { background: escribiendo.color, color: contraste(escribiendo.color) }
+                  : { background: 'transparent', color: escribiendo.color, textShadow: `0 0 3px ${contraste(escribiendo.color)}` }),
+              }}
             />
           </div>
           <div className="flex items-center justify-center gap-2 pb-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>

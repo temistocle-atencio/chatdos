@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, MoreVertical, Download, Forward, ChevronLeft, ChevronRight, Loader2, Play, Reply } from 'lucide-react';
 import { FotoConZoom } from './FotoConZoom';
+import { ReproductorVideo } from './ReproductorVideo';
 import { useAtras } from '../lib/atras';
 import { formatMessageDateSeparator, formatMessageTime } from '../lib/formatters';
 import type { DecryptedMessage } from '../types/chat';
@@ -33,8 +34,6 @@ const Diapositiva: React.FC<{
 }> = ({ m, cerca, activa, obtenerUrl }) => {
   const [url, setUrl] = useState<string | undefined>();
   const [error, setError] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-
   useEffect(() => {
     if (!cerca || url) return;
     let vivo = true;
@@ -45,11 +44,6 @@ const Diapositiva: React.FC<{
       vivo = false;
     };
   }, [cerca, url, m, obtenerUrl]);
-
-  // El video que se deja de ver se pausa
-  useEffect(() => {
-    if (!activa) videoRef.current?.pause();
-  }, [activa]);
 
   const thumb = m.payload?.media?.thumb;
   return (
@@ -65,7 +59,7 @@ const Diapositiva: React.FC<{
         </>
       ) : m.kind === 'video' ? (
         activa ? (
-          <video ref={videoRef} src={url} controls autoPlay playsInline className="max-w-full max-h-full" />
+          <ReproductorVideo src={url} poster={thumb} />
         ) : (
           <span className="relative flex items-center justify-center">
             {thumb && <img src={thumb} alt="" className="max-w-full max-h-[80vh] object-contain" />}
@@ -138,7 +132,7 @@ export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onD
 
   return (
     <div
-      className="fixed inset-0 z-[60] bg-black flex flex-col"
+      className="fixed inset-0 z-[60] bg-black flex flex-col animate-[aparecer_0.2s_ease-out]"
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Arriba: volver, quién y cuándo, cuántas, opciones */}
