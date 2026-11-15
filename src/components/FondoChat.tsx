@@ -3,10 +3,12 @@ import { Check, ImagePlus, X, Ban } from 'lucide-react';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { TEMAS, guardarFondo, hayFondo, prepararFondoPropio, useFondo, type Fondo } from '../lib/fondo';
 import { CapaFondo } from './CapaFondo';
+import { useTheme } from '../context/ThemeContext';
 
 /** Elegir el fondo del chat: temas incluidos o una foto propia, con vista previa. */
 export const FondoChat: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) => {
   const guardado = useFondo();
+  const { resolvedTheme } = useTheme();
   const [fondo, setFondo] = useState<Fondo>(guardado);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -45,7 +47,7 @@ export const FondoChat: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) => {
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
           {/* Vista previa */}
           <div className="relative h-44 rounded-[8px] overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933] mb-3 border border-[#E3E7EC] dark:border-[#003A73]">
-            <CapaFondo fondo={fondo} />
+            <CapaFondo fondo={fondo} modoOscuro={resolvedTheme === 'dark'} extraOscuro={resolvedTheme === 'dark' ? 0.45 : 0} />
             <div className="relative p-3 flex flex-col gap-1.5">
               <span className="self-start max-w-[70%] px-2.5 py-1.5 rounded-[5px] bg-white text-[#1F2933] text-[13px] font-['Inter'] shadow">Hola 👋 ¿cómo vas?</span>
               <span className="self-end max-w-[70%] px-2.5 py-1.5 rounded-[5px] bg-[#005198] text-white text-[13px] font-['Inter'] shadow">¡Muy bien! Mira el fondo nuevo</span>
@@ -63,7 +65,7 @@ export const FondoChat: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) => {
                 aria-pressed={fondo.tema === t.id}
               >
                 {t.fondo ? (
-                  <CapaFondo fondo={{ tema: t.id, oscuro: 0 }} />
+                  <CapaFondo fondo={{ tema: t.id, oscuro: 0 }} tamDibujo={220} />
                 ) : (
                   <span className="w-full h-full flex flex-col items-center justify-center gap-1 bg-[#F2F4F7] dark:bg-[#1F2933] text-[#5B6670] dark:text-[#E3E7EC]">
                     <Ban className="w-5 h-5" strokeWidth={2} />

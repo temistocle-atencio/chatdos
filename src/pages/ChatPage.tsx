@@ -2106,7 +2106,9 @@ export const ChatPage: React.FC = () => {
       style={{ paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}
     >
       {/* Fondo del chat (tema o foto propia) */}
-      {imagenFondo && <CapaFondo fondo={fondoChat} extraOscuro={resolvedTheme === 'dark' ? 0.45 : 0} />}
+      {imagenFondo && (
+        <CapaFondo fondo={fondoChat} extraOscuro={resolvedTheme === 'dark' ? 0.45 : 0} modoOscuro={resolvedTheme === 'dark'} />
+      )}
       {/* 4. UNA SOLA CABECERA EN EL CHAT (fondo #003A73 con foto, nombre, estado, llave y menú) */}
       <header
         className="relative bg-[#003A73] text-white px-3 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30"

@@ -7,12 +7,27 @@ export interface Tema {
   nombre: string;
   fondo?: string; // color de fondo
   lineas?: string; // color del dibujo
+  /** 'dibujitos': el dibujo nuevo en vectores, repetido como mosaico (nítido en cualquier pantalla) */
+  dibujo?: 'dibujitos';
+  /** Colores para el modo oscuro (si no tiene, se oscurece con una capa negra) */
+  noche?: { fondo: string; lineas: string };
 }
 
-// Todos los temas usan el mismo dibujo de líneas (un solo archivo liviano), cada uno con sus colores
+// Dibujos de los temas (archivos livianos). Cada tema les pone sus colores.
 export const DIBUJO = `${import.meta.env.BASE_URL}temas/lineas.png`;
+export const DIBUJITOS = `${import.meta.env.BASE_URL}temas/dibujos.svg`;
+/** Tamaño del mosaico de dibujitos en pantalla (px) */
+export const TAM_DIBUJITOS = 420;
+const NOCHE = { fondo: '#17212B', lineas: '#223040' };
+
+/** Tema que trae la app de entrada (si la persona nunca eligió uno) */
+export const TEMA_PREDETERMINADO = 'crema';
+
 export const TEMAS: Tema[] = [
   { id: 'ninguno', nombre: 'Sin fondo' },
+  { id: 'crema', nombre: 'Crema', fondo: '#F4ECDD', lineas: '#E1D1B4', dibujo: 'dibujitos', noche: NOCHE },
+  { id: 'piel', nombre: 'Piel', fondo: '#F2E3D5', lineas: '#E2C9B3', dibujo: 'dibujitos', noche: NOCHE },
+  { id: 'durazno', nombre: 'Durazno', fondo: '#F7DCCB', lineas: '#EABFA6', dibujo: 'dibujitos', noche: NOCHE },
   { id: 'lavanda', nombre: 'Lavanda', fondo: '#BCB0C9', lineas: '#F8E1F9' },
   { id: 'arena', nombre: 'Arena', fondo: '#CCB8B5', lineas: '#F8E0E7' },
   { id: 'rosa', nombre: 'Rosa', fondo: '#FDC9CF', lineas: '#E196A2' },
@@ -27,7 +42,7 @@ export interface Fondo {
 }
 
 const CLAVE = 'fondo-chat';
-let actual: Fondo = { tema: 'ninguno', oscuro: 0 };
+let actual: Fondo = { tema: TEMA_PREDETERMINADO, oscuro: 0 };
 let cargado = false;
 const avisos = new Set<(f: Fondo) => void>();
 
