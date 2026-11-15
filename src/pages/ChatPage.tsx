@@ -1134,6 +1134,7 @@ export const ChatPage: React.FC = () => {
     }
   };
 
+  const colaEnvio = useRef<Promise<void>>(Promise.resolve());
   // ----- Vista previa del enlace que se está escribiendo -----
   const [vistaEnlace, setVistaEnlace] = useState<{ url: string; datos: VistaEnlace | null; cargando: boolean } | null>(null);
   const enlacesQuitados = useRef(new Set<string>());
@@ -1173,8 +1174,11 @@ export const ChatPage: React.FC = () => {
       ? { senderId: replying.sender_id, text: shortText(replying), kind: replying.kind }
       : undefined;
 
-    const enlace = !especial && vistaEnlace?.datos && primerEnlace(textToSend) === vistaEnlace.url ? vistaEnlace.datos : undefined;
-    const payload: MessagePayload = {
+    const urlEnlace = !especial ? primerEnlace(textToSend) : null;
+    const enlace = urlEnlace && vistaEnlace?.datos && vistaEnlace.url === urlEnlace ? vistaEnlace.datos : undefined;
+    // Si la vista previa todavía no estaba lista, se espera un momento antes de subir el mensaje
+    const esperarEnlace = !!urlEnlace && !enlace && !enlacesQuitados.current.has(urlEnlace);
+    let payload: MessagePayload = {
       v: 1,
       ...(textToSend ? { text: textToSend } : {}),
       ...(especial ?? {}),
@@ -1214,7 +1218,23 @@ export const ChatPage: React.FC = () => {
     }
     scrollToBottom();
 
+    // Los mensajes salen en orden aunque uno espere su vista previa
+    const turno = colaEnvio.current;
+    let soltar: () => void = () => {};
+    colaEnvio.current = new Promise<void>((r) => (soltar = r));
     try {
+      if (esperarEnlace && urlEnlace) {
+        const datos = await Promise.race([
+          pedirVistaPrevia(urlEnlace),
+          new Promise<null>((r) => setTimeout(() => r(null), 7000)),
+        ]);
+        if (datos) {
+          payload = { ...payload, enlace: datos };
+          const conEnlace = payload;
+          setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, payload: conEnlace } : m)));
+        }
+      }
+      await turno;
       const encrypted = await encryptJSON(chatKey, payload);
       const fila = {
         id: messageId,
@@ -1241,8 +1261,10 @@ export const ChatPage: React.FC = () => {
         prev.map((m) => (m.id === messageId ? { ...m, isPending: false } : m))
       );
       notifyPartner(messageId);
+      soltar();
       return messageId;
     } catch (err) {
+      soltar();
       console.error('[ChatDos] Error en handleSendMessage:', err);
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, isPending: true } : m))
