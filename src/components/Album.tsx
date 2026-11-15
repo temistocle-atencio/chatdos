@@ -77,7 +77,7 @@ export const AlbumCompleto: React.FC<{
   useAtras(true, onCerrar);
   return (
     <div
-      className="fixed inset-0 z-40 flex flex-col bg-[#F2F4F7] dark:bg-[#1F2933]"
+      className="fixed inset-0 z-40 flex flex-col bg-[#F2F4F7] dark:bg-[#1F2933] animate-[subir_0.22s_ease-out]"
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="h-14 shrink-0 flex items-center gap-2 px-2 bg-white dark:bg-[#253240] border-b border-[#E3E7EC] dark:border-[#003A73]">

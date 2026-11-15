@@ -57,7 +57,7 @@ export const MultimediaChat: React.FC<{
 
   return (
     <div
-      className="fixed inset-0 z-40 flex flex-col bg-[#F2F4F7] dark:bg-[#1F2933]"
+      className="fixed inset-0 z-40 flex flex-col bg-[#F2F4F7] dark:bg-[#1F2933] animate-[subir_0.22s_ease-out]"
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="shrink-0 bg-[#003A73] text-white">

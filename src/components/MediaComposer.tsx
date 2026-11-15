@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAtras } from '../lib/atras';
-import { X, Send, Music, Play, Crop, Smile, Type, Pencil, Scissors, Loader2 } from 'lucide-react';
+import { X, Send, Music, Play, Crop, Smile, Type, Pencil, Scissors, Loader2, Plus } from 'lucide-react';
 import { compressImage, formatBytes, formatDuration, inspectVideo } from '../lib/media';
 import { EditorFoto, type HerramientaFoto } from './EditorFoto';
 import { EditorVideo } from './EditorVideo';
@@ -76,9 +76,13 @@ export const MediaComposer: React.FC<{
   onSend: (opts: { caption: string; viewOnce: boolean; hd: boolean }) => void;
   /** Reemplaza un archivo por su versión editada */
   onCambiar?: (index: number, m: PendingMedia) => void;
+  /** Cambia el orden (arrastrando las miniaturas) */
+  onReordenar?: (desde: number, hasta: number) => void;
+  /** Agregar más fotos o videos con el "+" */
+  onAgregar?: () => void;
   userId?: string;
   miLlavePublica?: unknown;
-}> = ({ medias, onCancel, onRemove, onSend, onCambiar, userId, miLlavePublica }) => {
+}> = ({ medias, onCancel, onRemove, onSend, onCambiar, onReordenar, onAgregar, userId, miLlavePublica }) => {
   const [caption, setCaption] = useState('');
   const [viewOnce, setViewOnce] = useState(false);
   const [hd, setHd] = useState(false); // fotos en alta calidad
@@ -87,6 +91,10 @@ export const MediaComposer: React.FC<{
   const [editarFoto, setEditarFoto] = useState<HerramientaFoto | null>(null);
   const [editarVideo, setEditarVideo] = useState(false);
   const [preparando, setPreparando] = useState(false);
+  // Arrastrar una miniatura para cambiar el orden
+  const arrastreRef = useRef<{ desde: number; id: number; x0: number; movio: boolean } | null>(null);
+  const [arrastrando, setArrastrando] = useState<{ desde: number; sobre: number } | null>(null);
+  const tiraRef = useRef<HTMLDivElement>(null);
   // Botón atrás: primero cierra el editor y vuelve a la vista previa
   useAtras(!!editarFoto, () => setEditarFoto(null));
   useAtras(editarVideo, () => setEditarVideo(false));
@@ -145,7 +153,7 @@ export const MediaComposer: React.FC<{
 
   return (
     <div
-      className="fixed inset-0 z-[60] bg-black flex flex-col"
+      className="fixed inset-0 z-[60] bg-black flex flex-col animate-[aparecer_0.2s_ease-out]"
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Arriba: cerrar y herramientas */}
@@ -220,17 +228,61 @@ export const MediaComposer: React.FC<{
         )}
       </div>
 
-      {varios && (
-        <div className="shrink-0 flex gap-3 overflow-x-auto px-3 pt-2.5 pb-2" aria-label="Archivos elegidos">
+      {(varios || onAgregar) && (
+        <div
+          ref={tiraRef}
+          className="shrink-0 flex items-center gap-3 overflow-x-auto px-3 pt-2.5 pb-2 [scrollbar-width:none]"
+          aria-label="Archivos elegidos"
+          onPointerMove={(e) => {
+            const a = arrastreRef.current;
+            if (!a || a.id !== e.pointerId) return;
+            if (Math.abs(e.clientX - a.x0) > 6) a.movio = true;
+            if (!a.movio) return;
+            // Sobre qué miniatura está el dedo
+            const hijos = Array.from(tiraRef.current?.querySelectorAll<HTMLElement>('[data-i]') ?? []);
+            let sobre = a.desde;
+            for (const h of hijos) {
+              const r = h.getBoundingClientRect();
+              if (e.clientX >= r.left && e.clientX <= r.right) sobre = Number(h.dataset.i);
+            }
+            setArrastrando({ desde: a.desde, sobre });
+          }}
+          onPointerUp={(e) => {
+            const a = arrastreRef.current;
+            if (!a || a.id !== e.pointerId) return;
+            arrastreRef.current = null;
+            const d = arrastrando;
+            setArrastrando(null);
+            if (a.movio && d && d.sobre !== d.desde) {
+              onReordenar?.(d.desde, d.sobre);
+              setActual(d.sobre);
+            } else if (!a.movio) setActual(a.desde);
+          }}
+          onPointerCancel={() => {
+            arrastreRef.current = null;
+            setArrastrando(null);
+          }}
+        >
           {medias.map((m, i) => (
-            <div key={i} className="relative shrink-0">
+            <div
+              key={i}
+              data-i={i}
+              className={`relative shrink-0 transition-transform ${
+                arrastrando && arrastrando.desde === i ? 'scale-110 z-10' : ''
+              } ${arrastrando && arrastrando.sobre === i && arrastrando.desde !== i ? (arrastrando.desde < i ? '-translate-x-2' : 'translate-x-2') : ''}`}
+            >
               <button
                 type="button"
-                onClick={() => setActual(i)}
-                className={`block w-14 h-14 rounded-[5px] overflow-hidden transition-opacity ${
+                onPointerDown={(e) => {
+                  if (!varios) return;
+                  e.currentTarget.setPointerCapture?.(e.pointerId);
+                  arrastreRef.current = { desde: i, id: e.pointerId, x0: e.clientX, movio: false };
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className={`block w-14 h-14 rounded-[5px] overflow-hidden transition-opacity touch-none ${
                   i === actual ? 'ring-2 ring-[#F28C1B] ring-offset-2 ring-offset-black' : 'opacity-60'
                 }`}
-                aria-label={`Ver archivo ${i + 1}`}
+                aria-label={`Ver archivo ${i + 1}${varios ? '. Mantén y arrastra para cambiar el orden' : ''}`}
               >
                 {m.kind === 'image' && urls[i] ? (
                   <img src={urls[i]} alt="" className="w-full h-full object-cover" />
@@ -250,6 +302,17 @@ export const MediaComposer: React.FC<{
               </button>
             </div>
           ))}
+          {onAgregar && medias.length < 10 && (
+            <button
+              type="button"
+              onClick={onAgregar}
+              className="shrink-0 w-14 h-14 rounded-[5px] border-2 border-dashed border-white/40 text-white/80 flex items-center justify-center hover:border-white"
+              aria-label="Agregar más fotos o videos"
+              title="Agregar más"
+            >
+              <Plus className="w-6 h-6" strokeWidth={2} />
+            </button>
+          )}
         </div>
       )}
 
