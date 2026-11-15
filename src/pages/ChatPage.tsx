@@ -58,6 +58,7 @@ import { IconoCamara, IconoClip, IconoStickerCara, IconoVerUnaVez, IconoVerUnaVe
 import OndaEnVivo, { TiempoGrabacion } from '../components/OndaEnVivo';
 import VistaPreviaGrabacion from '../components/VistaPreviaGrabacion';
 import { AlbumMosaico, AlbumCompleto } from '../components/Album';
+import { Galeria } from '../components/Galeria';
 import { ReenviarA } from '../components/ReenviarA';
 import { dejarReenvio, tomarReenvio, type ItemReenvio } from '../lib/reenvio';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
@@ -101,6 +102,8 @@ import {
   getCachedUrl,
   formatDuration,
   olvidarArchivoGuardado,
+  descargarArchivo,
+  nombreDescarga,
 } from '../lib/media';
 import {
   getLocalPrivateKey,
@@ -314,6 +317,8 @@ export const ChatPage: React.FC = () => {
     viewOnceMsg?: DecryptedMessage;
     loading?: boolean;
   } | null>(null);
+  // Carrusel de fotos y videos del chat (se fija la lista al abrirlo)
+  const [galeria, setGaleria] = useState<{ items: DecryptedMessage[]; inicio: number } | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordViewOnce, setRecordViewOnce] = useState(false);
   const [pausado, setPausado] = useState(false); // grabación con candado en pausa
@@ -1731,6 +1736,57 @@ export const ChatPage: React.FC = () => {
   useAtras(!!pegada, () => setPegada(null));
   useAtras(!!confirmDeleteAll, () => setConfirmDeleteAll(null));
 
+  // ----- Ver fotos y videos en carrusel, y descargarlos -----
+  /** Fotos y videos del chat que se pueden pasar en el carrusel (no "ver una vez" ni stickers) */
+  const mediosDelChat = () =>
+    visibles.filter(
+      (m) =>
+        (m.kind === 'image' || m.kind === 'video') &&
+        !m.view_once &&
+        !m.deleted_for_all &&
+        !m.decryptionError &&
+        !!m.payload?.media &&
+        !m.payload.media.sticker
+    );
+
+  const abrirGaleria = (m: DecryptedMessage, url: string, kind: 'image' | 'video') => {
+    const items = mediosDelChat();
+    const inicio = items.findIndex((x) => x.id === m.id);
+    if (inicio < 0) {
+      setViewer({ url, kind });
+      return;
+    }
+    setGaleria({ items, inicio });
+  };
+
+  /** El archivo descifrado de un mensaje (lo baja si todavía no está) */
+  const urlDeMensaje = useCallback(async (m: DecryptedMessage) => {
+    const media = m.payload?.media;
+    const guardada = getCachedUrl(m.id);
+    if (guardada) return guardada;
+    if (!media?.key || !m.media_path) return undefined;
+    return downloadDecrypted(m.id, m.media_path, media.key, media.mime);
+  }, []);
+
+  /** ¿Este mensaje tiene un archivo que se pueda descargar? */
+  const sePuedeDescargar = (m: DecryptedMessage) =>
+    m.kind !== 'text' && !m.view_once && !m.deleted_for_all && !m.decryptionError && !!m.payload?.media;
+
+  const descargarMensaje = async (m: DecryptedMessage) => {
+    setActionMsg(null);
+    const media = m.payload?.media;
+    if (!media) return;
+    try {
+      const url = await urlDeMensaje(m);
+      if (!url) throw new Error('sin archivo');
+      const ok = await descargarArchivo(url, media.mime, nombreDescarga(media.mime, m.payload?.sentAt || m.created_at, media.name));
+      if (ok) setToast(m.kind === 'video' ? 'Video descargado' : m.kind === 'audio' ? 'Audio descargado' : 'Foto descargada');
+    } catch (err) {
+      console.error('[ChatDos] descargar', err);
+      setToast('No se pudo descargar. Revisa tu conexión e inténtalo de nuevo.');
+    }
+  };
+
   // ----- Reenviar -----
   const [reenviar, setReenviar] = useState<DecryptedMessage[] | null>(null);
   const [preparandoReenvio, setPreparandoReenvio] = useState(false);
@@ -2630,7 +2686,7 @@ export const ChatPage: React.FC = () => {
                   isMine={isMine}
                   upload={uploads[m.id]}
                   onRetry={retryUpload}
-                  onOpenMedia={(url, kind) => setViewer({ url, kind })}
+                  onOpenMedia={(url, kind) => abrirGaleria(m, url, kind)}
                   onOpenViewOnce={openViewOnce}
                   mosaico
                 />
@@ -2687,7 +2743,7 @@ export const ChatPage: React.FC = () => {
                           isMine={isMine}
                           upload={uploads[msg.id]}
                           onRetry={retryUpload}
-                          onOpenMedia={(url, kind) => setViewer({ url, kind })}
+                          onOpenMedia={(url, kind) => abrirGaleria(msg, url, kind)}
                           onOpenViewOnce={openViewOnce}
                           autorAvatar={isMine ? myProfile?.avatar_path : partner?.avatar_path}
                           autorNombre={isMine ? myProfile?.display_name || myProfile?.username : partnerName}
@@ -3356,6 +3412,7 @@ export const ChatPage: React.FC = () => {
           fijado={ajustes.fijado === actionMsg.id}
           onFijar={() => void alternarFijado(actionMsg)}
           onReenviar={sePuedeReenviar(actionMsg) ? () => abrirReenviar(actionMsg) : undefined}
+          onDescargar={sePuedeDescargar(actionMsg) ? () => void descargarMensaje(actionMsg) : undefined}
           onInfo={() => {
             setInfoMsg(actionMsg);
             setActionMsg(null);
@@ -3363,6 +3420,20 @@ export const ChatPage: React.FC = () => {
         />
       )}
 
+      {galeria && (
+        <Galeria
+          items={galeria.items}
+          inicio={galeria.inicio}
+          autor={(m) => (m.sender_id === user?.id ? 'Tú' : partnerName)}
+          obtenerUrl={urlDeMensaje}
+          onDescargar={(m) => void descargarMensaje(m)}
+          onReenviar={(m) => {
+            setGaleria(null);
+            abrirReenviar(m);
+          }}
+          onCerrar={() => setGaleria(null)}
+        />
+      )}
       {reenviar && user && (
         <ReenviarA
           userId={user.id}
@@ -3387,7 +3458,7 @@ export const ChatPage: React.FC = () => {
               isMine={m.sender_id === user?.id}
               upload={uploads[m.id]}
               onRetry={retryUpload}
-              onOpenMedia={(url, kind) => setViewer({ url, kind })}
+              onOpenMedia={(url, kind) => abrirGaleria(m, url, kind)}
               onOpenViewOnce={openViewOnce}
               mosaico
             />
