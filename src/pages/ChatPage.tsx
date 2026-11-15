@@ -56,6 +56,7 @@ import { VistaPreviaEscribiendo } from '../components/TarjetaEnlace';
 import { cargarUbicacionesVivo, compartir, dejarDeCompartir, retomarEnChat, useCompartiendoEn } from '../lib/ubicacionVivo';
 import { IconoCamara, IconoClip, IconoStickerCara, IconoVerUnaVez, IconoVerUnaVezActivo } from '../components/Iconos';
 import OndaEnVivo, { TiempoGrabacion } from '../components/OndaEnVivo';
+import VistaPreviaGrabacion from '../components/VistaPreviaGrabacion';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { FondoChat } from '../components/FondoChat';
@@ -313,6 +314,7 @@ export const ChatPage: React.FC = () => {
   const [recording, setRecording] = useState(false);
   const [recordViewOnce, setRecordViewOnce] = useState(false);
   const [pausado, setPausado] = useState(false); // grabación con candado en pausa
+  const [previa, setPrevia] = useState<{ blob: Blob; duracion: number } | null>(null); // escuchar lo grabado en pausa
   const recorderRef = useRef<VoiceRecorder | null>(null);
   // Mantener presionado para grabar (como WhatsApp): soltar = enviar, izquierda = cancelar, arriba = candado
   const [gesto, setGesto] = useState<'no' | 'mantener' | 'bloqueado'>('no');
@@ -1718,6 +1720,7 @@ export const ChatPage: React.FC = () => {
     recorderRef.current = rec;
     setRecordViewOnce(false);
     setPausado(false);
+    setPrevia(null);
     setRecording(true);
     return true;
   };
@@ -1729,10 +1732,20 @@ export const ChatPage: React.FC = () => {
   const alternarPausa = () => {
     const r = recorderRef.current;
     if (!r) return;
-    if (r.enPausa) r.resume();
-    else r.pause();
-    setPausado(r.enPausa);
     navigator.vibrate?.(10);
+    if (r.enPausa) {
+      setPrevia(null);
+      r.resume();
+      setPausado(false);
+      return;
+    }
+    r.pause();
+    setPausado(true);
+    // Se arma lo grabado hasta ahora para poder escucharlo antes de enviar
+    const duracion = r.elapsed();
+    r.vistaPrevia().then((v) => {
+      if (v && recorderRef.current === r && r.enPausa) setPrevia({ blob: v.blob, duracion });
+    });
   };
 
   const cancelRecording = () => {
@@ -1740,6 +1753,7 @@ export const ChatPage: React.FC = () => {
     recorderRef.current = null;
     setRecording(false);
     setPausado(false);
+    setPrevia(null);
     setGesto('no');
     pulsacion.current = null;
   };
@@ -1836,6 +1850,7 @@ export const ChatPage: React.FC = () => {
     recorderRef.current = null;
     setRecording(false);
     setPausado(false);
+    setPrevia(null);
     setGesto('no');
     pulsacion.current = null;
     const { blob, mime, duration } = await rec.stop();
@@ -2594,15 +2609,22 @@ export const ChatPage: React.FC = () => {
           /* Grabación con candado (como WhatsApp): arriba tiempo, sonido y "ver una vez"; abajo borrar y enviar */
           <div className="bg-white dark:bg-[#253240] rounded-[22px] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_1px_3px_rgba(0,0,0,0.08)] px-3 pt-2.5 pb-3">
             <div className="flex items-center gap-3 h-11">
-              <span className="shrink-0 flex items-center gap-1.5 text-[17px] font-['Inter'] tabular-nums text-[#1F2933] dark:text-white">
-                {/* Punto rojo mientras graba; quieto y gris en pausa */}
-                <span
-                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${pausado ? 'bg-[#5B6670]/50' : 'bg-[#D64545] animate-pulse'}`}
-                  aria-hidden="true"
-                />
-                <TiempoGrabacion segundos={segundosGrabados} />
-              </span>
-              <OndaEnVivo nivel={nivelMicrofono} detenida={pausado} className="flex-1 min-w-0 text-[#5B6670] dark:text-[#C9CFD6]" />
+              {pausado && previa ? (
+                /* En pausa: escuchar lo grabado */
+                <VistaPreviaGrabacion key={previa.duracion} blob={previa.blob} duracion={previa.duracion} />
+              ) : (
+                <>
+                  <span className="shrink-0 flex items-center gap-1.5 text-[17px] font-['Inter'] tabular-nums text-[#1F2933] dark:text-white">
+                    {/* Punto rojo mientras graba; quieto y gris en pausa */}
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${pausado ? 'bg-[#5B6670]/50' : 'bg-[#D64545] animate-pulse'}`}
+                      aria-hidden="true"
+                    />
+                    <TiempoGrabacion segundos={segundosGrabados} />
+                  </span>
+                  <OndaEnVivo nivel={nivelMicrofono} detenida={pausado} className="flex-1 min-w-0 text-[#5B6670] dark:text-[#C9CFD6]" />
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => {

@@ -135,6 +135,37 @@ export function inspectVideo(file: Blob): Promise<PreparedVideo> {
 
 // ----- Audio -----
 
+/**
+ * Volumen promedio (RMS) de un audio en `barras` tramos, de 0 a 1 respecto al tramo más fuerte.
+ * Sirve para dibujar las barras de las notas de voz.
+ */
+export async function nivelesDeAudio(datos: ArrayBuffer, barras: number): Promise<number[]> {
+  const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const ctx = new Ctx();
+  try {
+    const audio = await new Promise<AudioBuffer>((ok, mal) => ctx.decodeAudioData(datos, ok, mal));
+    const canal = audio.getChannelData(0);
+    const paso = Math.max(1, Math.floor(canal.length / barras));
+    const niveles: number[] = [];
+    for (let b = 0; b < barras; b++) {
+      let suma = 0;
+      let n = 0;
+      for (let i = b * paso; i < Math.min(canal.length, (b + 1) * paso); i += 8) {
+        suma += canal[i] * canal[i];
+        n++;
+      }
+      niveles.push(n ? Math.sqrt(suma / n) : 0);
+    }
+    const tope = Math.max(...niveles, 0.005);
+    return niveles.map((v) => Math.min(1, v / tope));
+  } finally {
+    ctx.close().catch(() => {});
+  }
+}
+
+/** Alto de cada barra en px: el silencio es un punto y la voz normal queda a media altura */
+export const altoBarra = (v: number) => (v < 0.12 ? 3 : Math.round(4 + Math.pow(v, 1.3) * 16));
+
 export function audioDuration(file: Blob): Promise<number> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
@@ -270,6 +301,40 @@ export class VoiceRecorder {
     } catch {
       /* nada */
     }
+  }
+
+  /**
+   * Lo grabado hasta ahora, sin dejar de grabar (para escucharlo en pausa).
+   * Devuelve null si no se pudo armar.
+   */
+  async vistaPrevia(): Promise<{ blob: Blob; mime: string } | null> {
+    if (this.recorder) {
+      const rec = this.recorder;
+      if (rec.state !== 'inactive') {
+        // Pide lo que el grabador tiene guardado y espera a que llegue (máximo 1 s)
+        await new Promise<void>((listo) => {
+          let hecho = false;
+          const fin = () => {
+            if (hecho) return;
+            hecho = true;
+            rec.removeEventListener('dataavailable', fin);
+            listo();
+          };
+          rec.addEventListener('dataavailable', fin);
+          setTimeout(fin, 1000);
+          try {
+            rec.requestData();
+          } catch {
+            fin();
+          }
+        });
+      }
+      if (!this.chunks.length) return null;
+      const type = this.mime.split(';')[0];
+      return { blob: new Blob(this.chunks, { type }), mime: type };
+    }
+    if (!this.pcm.length) return null;
+    return { blob: encodeWav(this.pcm, this.sampleRate, 16000), mime: 'audio/wav' };
   }
 
   private release() {
