@@ -212,7 +212,7 @@ export const MediaComposer: React.FC<{
 
       <div className="relative flex-1 min-h-0 flex items-center justify-center p-1">
         {url && media.kind === 'image' && (
-          <img
+          <img decoding="async"
             src={url}
             alt="Vista previa"
             className="max-w-full max-h-full object-contain"
@@ -259,7 +259,7 @@ export const MediaComposer: React.FC<{
                 aria-label={`Ver archivo ${i + 1}`}
               >
                 {m.kind === 'image' && urls[i] ? (
-                  <img src={urls[i]} alt="" className="w-full h-full object-cover" />
+                  <img decoding="async" src={urls[i]} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <span className="w-full h-full flex items-center justify-center bg-[#1F2933] text-white">
                     <Play className="w-5 h-5" strokeWidth={2} />

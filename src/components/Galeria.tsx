@@ -74,7 +74,7 @@ const Diapositiva: React.FC<{
     <div className="relative w-full h-full shrink-0 snap-center snap-always flex items-center justify-center p-2 select-none" style={{ WebkitTouchCallout: 'none' }}>
       {!url ? (
         <>
-          {thumb && <img src={thumb} alt="" className="absolute inset-0 m-auto max-w-full max-h-full object-contain blur-md opacity-60" />}
+          {thumb && <img decoding="async" src={thumb} alt="" className="absolute inset-0 m-auto max-w-full max-h-full object-contain blur-md opacity-60" />}
           {error ? (
             <span className="relative text-white text-sm font-['Inter']">No se pudo cargar</span>
           ) : (
@@ -86,7 +86,7 @@ const Diapositiva: React.FC<{
           <video ref={videoRef} src={url} controls autoPlay playsInline className="max-w-full max-h-full" />
         ) : (
           <span className="relative flex items-center justify-center">
-            {thumb && <img src={thumb} alt="" className="max-w-full max-h-[80vh] object-contain" />}
+            {thumb && <img decoding="async" src={thumb} alt="" className="max-w-full max-h-[80vh] object-contain" />}
             <Play className="absolute w-14 h-14 text-white fill-white/90 drop-shadow" strokeWidth={1.5} />
           </span>
         )

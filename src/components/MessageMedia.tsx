@@ -161,7 +161,7 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
     return (
       <div className="relative" style={style}>
         {url ? (
-          <img src={url} alt="Sticker" className="w-full h-full object-contain rounded-[12px]" draggable={false} />
+          <img decoding="async" src={url} alt="Sticker" className="w-full h-full object-contain rounded-[12px]" draggable={false} />
         ) : error ? (
           <button
             type="button"
@@ -191,9 +191,9 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
         aria-label="Ver foto"
       >
         {media?.thumb && !url && (
-          <img src={media.thumb} alt="" className="absolute inset-0 w-full h-full object-cover blur-md scale-110" />
+          <img decoding="async" src={media.thumb} alt="" className="absolute inset-0 w-full h-full object-cover blur-md scale-110" />
         )}
-        {url && <img src={url} alt="Foto" className="absolute inset-0 w-full h-full object-cover" draggable={false} />}
+        {url && <img decoding="async" src={url} alt="Foto" className="absolute inset-0 w-full h-full object-cover" draggable={false} />}
         {(media?.hd || media?.original) && (
           <span className="absolute left-1.5 bottom-1.5 px-1 rounded-[3px] bg-white/90 text-[#1F2933] text-[10px] font-['Poppins'] font-bold leading-4">
             {media?.original ? 'ORIGINAL' : 'HD'}
@@ -235,7 +235,7 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
         style={size}
         aria-label="Ver video"
       >
-        {media?.thumb && <img src={media.thumb} alt="" className="absolute inset-0 w-full h-full object-cover" />}
+        {media?.thumb && <img decoding="async" src={media.thumb} alt="" className="absolute inset-0 w-full h-full object-cover" />}
         {!upload && (
           <span className="absolute inset-0 flex items-center justify-center text-white">
             {loading ? (

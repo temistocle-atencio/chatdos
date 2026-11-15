@@ -53,6 +53,8 @@ export const CamaraChat: React.FC<{
   const [modo, setModo] = useState<Modo>(modoInicial);
   const [frontal, setFrontal] = useState(false);
   const [listo, setListo] = useState(false);
+  const [tomando, setTomando] = useState(false); // la foto completa tarda un poco: se muestra que está trabajando
+  const tomandoRef = useRef(false);
   const [hayFlash, setHayFlash] = useState(false);
   const [flash, setFlash] = useState(false);
   const [grabando, setGrabando] = useState(false);
@@ -172,10 +174,14 @@ export const CamaraChat: React.FC<{
 
   const tomarFoto = async () => {
     const v = videoRef.current;
-    if (!v || !v.videoWidth) return;
+    if (!v || !v.videoWidth || tomandoRef.current) return;
+    tomandoRef.current = true;
+    setTomando(true);
     setDestello(true);
     setTimeout(() => setDestello(false), 150);
     const completa = await fotoCompleta();
+    tomandoRef.current = false;
+    setTomando(false);
     if (completa) {
       const file = new File([completa], `foto-${Date.now()}.jpg`, { type: completa.type || 'image/jpeg' });
       recientes.unshift({ file, url: URL.createObjectURL(completa) });
@@ -379,7 +385,7 @@ export const CamaraChat: React.FC<{
                       aria-pressed={si}
                       aria-label={si ? 'Quitar de las elegidas' : 'Elegir esta foto'}
                     >
-                      <img src={r.url} alt="" className="w-full h-full object-cover" />
+                      <img decoding="async" src={r.url} alt="" className="w-full h-full object-cover" />
                       {si && (
                         <span className="absolute inset-0 bg-black/40 flex items-center justify-center">
                           <Check className="w-8 h-8" strokeWidth={2.5} />
@@ -431,8 +437,10 @@ export const CamaraChat: React.FC<{
               <span
                 className={`rounded-full transition-all ${
                   grabando ? 'w-10 h-10 bg-[#E5484D]' : modo === 'video' ? 'w-[60px] h-[60px] bg-[#E5484D]' : 'w-[62px] h-[62px] bg-white'
-                }`}
-              />
+                } ${tomando ? 'scale-90 opacity-80' : ''} flex items-center justify-center`}
+              >
+                {tomando && <span className="w-7 h-7 rounded-full border-[3px] border-[#005198] border-t-transparent animate-spin" />}
+              </span>
             </button>
 
             <button
