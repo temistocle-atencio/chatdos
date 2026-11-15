@@ -1,5 +1,5 @@
 import React from 'react';
-import { DIBUJITOS, DIBUJO, TAM_DIBUJITOS, TEMAS, type Fondo } from '../lib/fondo';
+import { DIBUJITOS, DIBUJO, TAM_DIBUJITOS, TAM_LINEAS, TEMAS, type Fondo } from '../lib/fondo';
 
 /** Dibuja el fondo del chat (tema o foto propia) ocupando todo su contenedor. */
 export const CapaFondo: React.FC<{
@@ -18,27 +18,19 @@ export const CapaFondo: React.FC<{
   // Con colores de noche no hace falta la capa negra del modo oscuro
   const oscuro = Math.min(0.85, fondo.oscuro / 100 + (deNoche ? 0 : extraOscuro));
   const colores = deNoche ? tema!.noche! : { fondo: tema?.fondo, lineas: tema?.lineas };
-  const mascara = (
-    tema?.dibujo === 'dibujitos'
-      ? {
-          WebkitMaskImage: `url(${DIBUJITOS})`,
-          maskImage: `url(${DIBUJITOS})`,
-          WebkitMaskSize: `${tamDibujo}px`,
-          maskSize: `${tamDibujo}px`,
-          WebkitMaskRepeat: 'repeat',
-          maskRepeat: 'repeat',
-        }
-      : {
-          WebkitMaskImage: `url(${DIBUJO})`,
-          maskImage: `url(${DIBUJO})`,
-          WebkitMaskSize: 'cover',
-          maskSize: 'cover',
-          WebkitMaskPosition: 'center',
-          maskPosition: 'center',
-          WebkitMaskRepeat: 'no-repeat',
-          maskRepeat: 'no-repeat',
-        }
-  ) as React.CSSProperties;
+  // Los dos dibujos se repiten como mosaico, siempre del mismo tamaño (en un PC caben más,
+  // en vez de estirarse y verse borrosos). En las miniaturas se ven más chicos.
+  const dibujitos = tema?.dibujo === 'dibujitos';
+  const ancho = Math.round(((dibujitos ? TAM_DIBUJITOS : TAM_LINEAS) * tamDibujo) / TAM_DIBUJITOS);
+  const imagen = `url(${dibujitos ? DIBUJITOS : DIBUJO})`;
+  const mascara = {
+    WebkitMaskImage: imagen,
+    maskImage: imagen,
+    WebkitMaskSize: `${ancho}px auto`,
+    maskSize: `${ancho}px auto`,
+    WebkitMaskRepeat: 'repeat',
+    maskRepeat: 'repeat',
+  } as React.CSSProperties;
   return (
     <div className={`absolute inset-0 pointer-events-none overflow-hidden ${className}`} aria-hidden="true">
       {propio ? (
