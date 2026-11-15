@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAtras } from '../lib/atras';
-import { X, Send, Music, Play, Crop, Smile, Type, Pencil, Scissors, Loader2 } from 'lucide-react';
+import { X, Send, Music, Play, Crop, Smile, Type, Pencil, Scissors, Loader2, Link2 } from 'lucide-react';
+import { esIOS } from '../lib/fotosOriginales';
 import { compressImage, formatBytes, formatDuration, inspectVideo } from '../lib/media';
 import { EditorFoto, type HerramientaFoto } from './EditorFoto';
 import { EditorVideo } from './EditorVideo';
@@ -36,7 +37,9 @@ export const AttachSheet: React.FC<{
   onUbicacion: () => void;
   onContacto: () => void;
   onAudioFile: () => void;
-}> = ({ onClose, onGallery, onCamera, onUbicacion, onContacto, onAudioFile }) => {
+  /** Enlace para compartir fotos originales con alguien que no tiene ChatDos */
+  onEnlace?: () => void;
+}> = ({ onClose, onGallery, onCamera, onUbicacion, onContacto, onAudioFile, onEnlace }) => {
   const item = (icon: React.ReactNode, color: string, label: string, onClick: () => void) => (
     <button
       type="button"
@@ -66,6 +69,7 @@ export const AttachSheet: React.FC<{
           {item(<IconoUbicacionColor className="w-8 h-8" />, '#1E8E3E', 'Ubicación', onUbicacion)}
           {item(<IconoContactoColor className="w-7 h-7" />, '#0c52bb', 'Contacto', onContacto)}
           {item(<Music className="w-6 h-6" strokeWidth={2} />, '#D46A00', 'Audio', onAudioFile)}
+          {onEnlace && item(<Link2 className="w-7 h-7" strokeWidth={2} />, '#005198', 'Enlace', onEnlace)}
         </div>
       </div>
     </div>
@@ -275,6 +279,11 @@ export const MediaComposer: React.FC<{
         </div>
       )}
 
+      {calidad === 'original' && esIOS && (
+        <p className="shrink-0 px-4 pb-1 text-[11px] font-['Inter'] text-white/70 text-center">
+          Para toda la calidad del iPhone: al elegir fotos toca <b>Opciones</b> y elige <b>Actual</b>.
+        </p>
+      )}
       {/* Abajo: comentario, ver una vez y enviar */}
       <div className="shrink-0 px-2 pt-1 pb-2 flex items-end gap-2">
         {!viewOnce && media.kind !== 'audio' ? (

@@ -108,6 +108,9 @@ import { MessageActionsSheet } from '../components/MessageActionsSheet';
 import { MessageMedia, MediaViewer, type UploadState } from '../components/MessageMedia';
 import { AttachSheet, MediaComposer, type Calidad, type PendingMedia } from '../components/MediaComposer';
 import { bajarOriginal, borrarOriginal, subirOriginal, type DatosOriginal } from '../lib/originales';
+import { ACEPTA_FOTOS_Y_VIDEOS } from '../lib/fotosOriginales';
+import { CrearEnlace } from '../components/CrearEnlace';
+import type { FotoDelChat } from '../lib/compartidos';
 import {
   MAX_FILE_BYTES,
   MAX_VIDEO_SECONDS,
@@ -370,6 +373,7 @@ export const ChatPage: React.FC = () => {
   const [albumAbierto, setAlbumAbierto] = useState<string | null>(null); // id del primer mensaje del álbum
   const [multimediaOpen, setMultimediaOpen] = useState(false); // fotos, audios y enlaces del chat
   const [enviarExtra, setEnviarExtra] = useState<null | 'ubicacion' | 'contacto'>(null);
+  const [crearEnlaceCon, setCrearEnlaceCon] = useState<FotoDelChat[] | null>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<DecryptedMessage[]>([]);
 
@@ -1862,6 +1866,22 @@ export const ChatPage: React.FC = () => {
       console.error('[ChatDos] descargar', err);
       setToast('No se pudo descargar. Revisa tu conexión e inténtalo de nuevo.');
     }
+  };
+
+  /** Enlace para compartir una foto enviada en Original con alguien que no tiene ChatDos */
+  const compartirPorEnlace = async (m: DecryptedMessage) => {
+    const o = m.payload?.media?.original;
+    if (!o) return;
+    let previa: Blob | undefined;
+    try {
+      const u = await urlDeMensaje(m);
+      if (u) previa = await (await fetch(u)).blob();
+    } catch {
+      /* sin vista previa */
+    }
+    setCrearEnlaceCon([
+      { ruta: o.ruta, key: o.key, mime: o.mime, size: o.size, nombre: nombreDescarga(o.mime, m.payload?.sentAt || m.created_at), previa },
+    ]);
   };
 
   // ----- Reenviar -----
@@ -3379,7 +3399,7 @@ export const ChatPage: React.FC = () => {
         <input
           ref={galleryInputRef}
           type="file"
-          accept="image/*,video/*"
+          accept={ACEPTA_FOTOS_Y_VIDEOS}
           multiple
           className="hidden"
           onChange={(e) => {
@@ -3456,6 +3476,10 @@ export const ChatPage: React.FC = () => {
           onContacto={() => {
             setAttachOpen(false);
             setEnviarExtra('contacto');
+          }}
+          onEnlace={() => {
+            setAttachOpen(false);
+            setCrearEnlaceCon([]);
           }}
           onAudioFile={() => {
             avisarSelectorArchivo();
@@ -3585,6 +3609,8 @@ export const ChatPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {crearEnlaceCon && <CrearEnlace delChat={crearEnlaceCon} onCerrar={() => setCrearEnlaceCon(null)} />}
 
       {enviarExtra === 'ubicacion' && (
         <EnviarUbicacion
@@ -3757,6 +3783,7 @@ export const ChatPage: React.FC = () => {
           autor={(m) => (m.sender_id === user?.id ? 'Tú' : partnerName)}
           obtenerUrl={urlDeMensaje}
           onDescargar={(m) => void descargarMensaje(m)}
+          onCompartirEnlace={(m) => void compartirPorEnlace(m)}
           onReenviar={(m) => {
             setGaleria(null);
             abrirReenviar(m);

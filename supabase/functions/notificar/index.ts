@@ -5,6 +5,7 @@
 //   { accion: "turn" }                  -> credenciales del servidor de paso para las llamadas
 //   { accion: "enlace", url }           -> vista previa de un enlace (título, descripción e imagen)
 //   { accion: "original_subir" | "original_bajar" | "original_borrar" } -> fotos en calidad Original (R2)
+//   { accion: "compartido_crear" | "compartido_borrar" } y "compartido_ver" (público) -> enlaces para compartir
 // La notificación NUNCA lleva el texto del mensaje (está cifrado de extremo a extremo):
 // solo dice quién escribió y qué tipo de mensaje es.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -177,6 +178,65 @@ async function vistaPrevia(texto: string) {
   };
 }
 
+// ---------- Cloudflare R2: fotos originales y enlaces para compartir ----------
+// Todo lo que se guarda en R2 está CIFRADO desde el celular; aquí solo se dan permisos temporales.
+// Tope de 9 GB entre las dos cosas (lo gratis son 10 GB): si no cabe, se borran los originales más viejos.
+type Servicio = ReturnType<typeof createClient>;
+const TOPE_R2 = 9 * 1024 * 1024 * 1024;
+
+function r2Config() {
+  const cuenta = Deno.env.get('R2_ACCOUNT_ID');
+  const llaveId = Deno.env.get('R2_ACCESS_KEY_ID');
+  const secreto = Deno.env.get('R2_SECRET_ACCESS_KEY');
+  const balde = Deno.env.get('R2_BUCKET') || 'chatdos-originales';
+  if (!cuenta || !llaveId || !secreto) return null;
+  const cliente = new AwsClient({ accessKeyId: llaveId, secretAccessKey: secreto, service: 's3', region: 'auto' });
+  const enR2 = (r: string) => `https://${cuenta}.r2.cloudflarestorage.com/${balde}/${r}`;
+  const firmar = async (r: string, metodo: 'GET' | 'PUT', segundos: number) => {
+    const u = new URL(enR2(r));
+    u.searchParams.set('X-Amz-Expires', String(segundos));
+    return (await cliente.sign(new Request(u.href, { method: metodo }), { aws: { signQuery: true } })).url;
+  };
+  const borrar = (r: string) => cliente.fetch(enR2(r), { method: 'DELETE' }).catch(() => null);
+  return { firmar, borrar };
+}
+
+/** Borra los enlaces vencidos y sus archivos */
+async function limpiarCompartidos(servicio: Servicio, r2: NonNullable<ReturnType<typeof r2Config>>) {
+  const { data } = await servicio.from('compartidos').select('id, rutas').lt('expires_at', new Date().toISOString()).limit(50);
+  for (const c of data ?? []) {
+    for (const r of (c.rutas as string[]) ?? []) await r2.borrar(r);
+    await servicio.from('compartidos').delete().eq('id', c.id);
+  }
+}
+
+/** Hace espacio para "tam" bytes borrando los originales más viejos. Devuelve false si no se pudo. */
+async function hacerEspacio(servicio: Servicio, r2: NonNullable<ReturnType<typeof r2Config>>, tam: number) {
+  await limpiarCompartidos(servicio, r2);
+  const { data: fotos } = await servicio.from('fotos_originales').select('ruta, size').order('created_at', { ascending: true });
+  const { data: comps } = await servicio.from('compartidos').select('size');
+  let total = (fotos ?? []).reduce((t, f) => t + Number(f.size), 0) + (comps ?? []).reduce((t, c) => t + Number(c.size), 0);
+  for (const f of fotos ?? []) {
+    if (total + tam <= TOPE_R2) break;
+    await r2.borrar(f.ruta);
+    await servicio.from('fotos_originales').delete().eq('ruta', f.ruta);
+    total -= Number(f.size);
+  }
+  return total + tam <= TOPE_R2;
+}
+
+/** Enlace público: cualquiera con el enlace (no necesita cuenta) */
+async function verCompartido(servicio: Servicio, id: string) {
+  if (!/^[A-Za-z0-9]{16,40}$/.test(id)) return { error: 'Enlace no válido' };
+  const r2 = r2Config();
+  if (!r2) return { error: 'El servicio no está disponible' };
+  const { data: c } = await servicio.from('compartidos').select('rutas, existentes, expires_at').eq('id', id).maybeSingle();
+  if (!c || new Date(c.expires_at).getTime() < Date.now()) return { error: 'Este enlace ya venció o fue borrado.' };
+  const urls: Record<string, string> = {};
+  for (const r of [...((c.rutas as string[]) ?? []), ...((c.existentes as string[]) ?? [])]) urls[r] = await r2.firmar(r, 'GET', 3600);
+  return { manifiesto: urls[`comp/${id}/m.bin`], urls, expira: c.expires_at };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return responder({ error: 'Método no permitido' }, 405);
@@ -185,6 +245,10 @@ Deno.serve(async (req) => {
     const servicio = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+
+    // Enlace para compartir: lo abre cualquier persona (sin cuenta), por eso va antes de revisar la sesión
+    const previo = await req.clone().json().catch(() => ({}));
+    if (previo?.accion === 'compartido_ver') return responder(await verCompartido(servicio, String(previo.id ?? '')));
 
     const token = (req.headers.get('Authorization') ?? '').replace('Bearer ', '');
     const { data: quien } = await servicio.auth.getUser(token);
@@ -213,65 +277,71 @@ Deno.serve(async (req) => {
       return responder(await vistaPrevia(String(cuerpo.url ?? '')));
     }
 
-    // ---------- Fotos en calidad Original (Cloudflare R2) ----------
-    // Solo se entregan permisos temporales para subir o bajar el archivo CIFRADO; aquí nunca se ve la foto.
-    // Tope de 9 GB (lo gratis son 10 GB): si no cabe, se borran los originales más viejos.
-    if (cuerpo.accion === 'original_subir' || cuerpo.accion === 'original_bajar' || cuerpo.accion === 'original_borrar') {
-      const cuenta = Deno.env.get('R2_ACCOUNT_ID');
-      const llaveId = Deno.env.get('R2_ACCESS_KEY_ID');
-      const secreto = Deno.env.get('R2_SECRET_ACCESS_KEY');
-      const balde = Deno.env.get('R2_BUCKET') || 'chatdos-originales';
-      if (!cuenta || !llaveId || !secreto) return responder({ error: 'El servicio de fotos originales no está configurado.' });
-      const r2 = new AwsClient({ accessKeyId: llaveId, secretAccessKey: secreto, service: 's3', region: 'auto' });
-      const enR2 = (r: string) => `https://${cuenta}.r2.cloudflarestorage.com/${balde}/${r}`;
-      const TOPE = 9 * 1024 * 1024 * 1024;
+    // ---------- Fotos en calidad Original y enlaces para compartir (Cloudflare R2) ----------
+    if (String(cuerpo.accion ?? '').startsWith('original_') || String(cuerpo.accion ?? '').startsWith('compartido_')) {
+      const r2 = r2Config();
+      if (!r2) return responder({ error: 'El servicio de fotos originales no está configurado.' });
+      const esRutaChat = (r: string) => /^[0-9a-f-]{36}\/[0-9a-f-]{36}\.bin$/.test(r);
+      const soyDelChat = async (chatId: string) =>
+        !!(await servicio.from('chat_members').select('user_id').eq('chat_id', chatId).eq('user_id', yo).maybeSingle()).data;
 
-      let ruta = '';
-      let chatId = '';
       if (cuerpo.accion === 'original_subir') {
-        chatId = String(cuerpo.chat_id ?? '');
-        ruta = `${chatId}/${crypto.randomUUID()}.bin`;
-      } else {
-        ruta = String(cuerpo.ruta ?? '');
-        chatId = ruta.split('/')[0];
-      }
-      if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.bin$/.test(ruta)) return responder({ error: 'Archivo no válido' });
-      const { data: soy } = await servicio.from('chat_members').select('user_id').eq('chat_id', chatId).eq('user_id', yo).maybeSingle();
-      if (!soy) return responder({ error: 'No eres parte de este chat' });
-
-      if (cuerpo.accion === 'original_borrar') {
-        await r2.fetch(enR2(ruta), { method: 'DELETE' }).catch(() => null);
-        await servicio.from('fotos_originales').delete().eq('ruta', ruta);
-        return responder({ ok: true });
+        const chatId = String(cuerpo.chat_id ?? '');
+        const tam = Number(cuerpo.tam ?? 0);
+        if (!tam || tam > 260 * 1024 * 1024) return responder({ error: 'La foto es demasiado grande (máximo 250 MB).' });
+        if (!(await soyDelChat(chatId))) return responder({ error: 'No eres parte de este chat' });
+        if (!(await hacerEspacio(servicio, r2, tam))) return responder({ error: 'No hay espacio para fotos originales.' });
+        const ruta = `${chatId}/${crypto.randomUUID()}.bin`;
+        const { error: e } = await servicio.from('fotos_originales').insert({ ruta, chat_id: chatId, sender_id: yo, size: tam });
+        if (e) return responder({ error: 'No se pudo preparar la subida.' });
+        return responder({ url: await r2.firmar(ruta, 'PUT', 1800), ruta });
       }
 
-      if (cuerpo.accion === 'original_bajar') {
+      if (cuerpo.accion === 'original_bajar' || cuerpo.accion === 'original_borrar') {
+        const ruta = String(cuerpo.ruta ?? '');
+        if (!esRutaChat(ruta) || !(await soyDelChat(ruta.split('/')[0]))) return responder({ error: 'Archivo no válido' });
+        if (cuerpo.accion === 'original_borrar') {
+          await r2.borrar(ruta);
+          await servicio.from('fotos_originales').delete().eq('ruta', ruta);
+          return responder({ ok: true });
+        }
         const { data: existe } = await servicio.from('fotos_originales').select('ruta').eq('ruta', ruta).maybeSingle();
         if (!existe) return responder({ error: 'El original ya no está guardado (se liberó espacio). La foto en HD sigue en el chat.' });
-        const u = new URL(enR2(ruta));
-        u.searchParams.set('X-Amz-Expires', '900');
-        const firmado = await r2.sign(new Request(u.href, { method: 'GET' }), { aws: { signQuery: true } });
-        return responder({ url: firmado.url, ruta });
+        return responder({ url: await r2.firmar(ruta, 'GET', 900), ruta });
       }
 
-      // Subir: revisar espacio y, si no cabe, borrar los originales más viejos
-      const tam = Number(cuerpo.tam ?? 0);
-      if (!tam || tam > 260 * 1024 * 1024) return responder({ error: 'La foto es demasiado grande (máximo 250 MB).' });
-      const { data: todas } = await servicio.from('fotos_originales').select('ruta, size').order('created_at', { ascending: true });
-      let total = (todas ?? []).reduce((t, f) => t + Number(f.size), 0);
-      for (const f of todas ?? []) {
-        if (total + tam <= TOPE) break;
-        await r2.fetch(enR2(f.ruta), { method: 'DELETE' }).catch(() => null);
-        await servicio.from('fotos_originales').delete().eq('ruta', f.ruta);
-        total -= Number(f.size);
+      // Crear un enlace: devuelve dónde subir cada archivo (cifrado) y el índice
+      if (cuerpo.accion === 'compartido_crear') {
+        const tams = (Array.isArray(cuerpo.tams) ? cuerpo.tams : []).map(Number).filter((n: number) => n > 0 && n <= 260 * 1024 * 1024);
+        const existentes = (Array.isArray(cuerpo.existentes) ? cuerpo.existentes : []).map(String).filter(esRutaChat);
+        if (!tams.length && !existentes.length) return responder({ error: 'No hay fotos para compartir' });
+        if (tams.length > 60 || existentes.length > 60) return responder({ error: 'Máximo 30 fotos por enlace' });
+        for (const r of existentes) if (!(await soyDelChat(r.split('/')[0]))) return responder({ error: 'Una de las fotos no es de tus chats' });
+        const total = tams.reduce((t: number, n: number) => t + n, 0) + 64 * 1024;
+        if (!(await hacerEspacio(servicio, r2, total))) return responder({ error: 'No hay espacio para compartir tantas fotos.' });
+        const letras = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+        const id = Array.from(crypto.getRandomValues(new Uint8Array(22)), (b) => letras[b % letras.length]).join('');
+        const rutas = tams.map((_: number, i: number) => `comp/${id}/${i}.bin`);
+        const manifiesto = `comp/${id}/m.bin`;
+        const vence = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+        const { error: e } = await servicio
+          .from('compartidos')
+          .insert({ id, owner_id: yo, expires_at: vence, size: total, rutas: [...rutas, manifiesto], existentes });
+        if (e) return responder({ error: 'No se pudo crear el enlace.' });
+        const subir: string[] = [];
+        for (const r of rutas) subir.push(await r2.firmar(r, 'PUT', 3600));
+        return responder({ id, rutas, subir, manifiesto: await r2.firmar(manifiesto, 'PUT', 3600), vence });
       }
-      if (total + tam > TOPE) return responder({ error: 'No hay espacio para fotos originales.' });
-      const { error: errAnotar } = await servicio.from('fotos_originales').insert({ ruta, chat_id: chatId, sender_id: yo, size: tam });
-      if (errAnotar) return responder({ error: 'No se pudo preparar la subida.' });
-      const u = new URL(enR2(ruta));
-      u.searchParams.set('X-Amz-Expires', '1800');
-      const firmado = await r2.sign(new Request(u.href, { method: 'PUT' }), { aws: { signQuery: true } });
-      return responder({ url: firmado.url, ruta });
+
+      if (cuerpo.accion === 'compartido_borrar') {
+        const id = String(cuerpo.id ?? '');
+        const { data: c } = await servicio.from('compartidos').select('rutas, owner_id').eq('id', id).maybeSingle();
+        if (!c || c.owner_id !== yo) return responder({ error: 'Enlace no encontrado' });
+        for (const r of (c.rutas as string[]) ?? []) await r2.borrar(r);
+        await servicio.from('compartidos').delete().eq('id', id);
+        return responder({ ok: true });
+      }
+      return responder({ error: 'Acción no válida' });
     }
 
     // ---------- Servidor de paso para llamadas (TURN de Cloudflare) ----------

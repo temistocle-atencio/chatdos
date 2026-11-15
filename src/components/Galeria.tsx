@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, MoreVertical, Download, Forward, ChevronLeft, ChevronRight, Loader2, Play, Reply } from 'lucide-react';
+import { ArrowLeft, MoreVertical, Download, Forward, ChevronLeft, ChevronRight, Loader2, Play, Reply, Link2 } from 'lucide-react';
+import { esHeic, veHeic } from '../lib/fotosOriginales';
 import { FotoConZoom } from './FotoConZoom';
 import { useAtras } from '../lib/atras';
 import { bajarOriginal } from '../lib/originales';
@@ -22,6 +23,8 @@ type Props = {
   onReenviar?: (m: DecryptedMessage) => void;
   /** Responder a esta foto o video en el chat */
   onResponder?: (m: DecryptedMessage) => void;
+  /** Crear un enlace para compartir la foto original con alguien sin ChatDos */
+  onCompartirEnlace?: (m: DecryptedMessage) => void;
   onCerrar: () => void;
 };
 
@@ -31,7 +34,8 @@ const Diapositiva: React.FC<{
   cerca: boolean;
   activa: boolean;
   obtenerUrl: Props['obtenerUrl'];
-}> = ({ m, cerca, activa, obtenerUrl }) => {
+  onDescargar?: (m: DecryptedMessage) => void;
+}> = ({ m, cerca, activa, obtenerUrl, onDescargar }) => {
   const [url, setUrl] = useState<string | undefined>();
   const [error, setError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -93,7 +97,7 @@ const Diapositiva: React.FC<{
       {original && url && activa && !verOriginal?.listo && (
         <button
           type="button"
-          onClick={() => void abrirOriginal()}
+          onClick={() => (esHeic(original.mime) && !veHeic ? onDescargar?.(m) : void abrirOriginal())}
           disabled={!!verOriginal && !verOriginal.error}
           className="absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[90%] min-h-10 py-2 px-4 rounded-full bg-black/65 text-center border border-white/30 text-white text-sm font-['Inter'] flex items-center gap-2"
         >
@@ -104,7 +108,7 @@ const Diapositiva: React.FC<{
           ) : verOriginal?.error ? (
             verOriginal.error
           ) : (
-            `Ver original · ${formatearPeso(original.size)}`
+            `${esHeic(original.mime) && !veHeic ? 'Descargar original (HEIC)' : 'Ver original'} · ${formatearPeso(original.size)}`
           )}
         </button>
       )}
@@ -119,7 +123,7 @@ const Diapositiva: React.FC<{
 
 const formatearPeso = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
-export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onDescargar, onReenviar, onResponder, onCerrar }) => {
+export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onDescargar, onReenviar, onResponder, onCompartirEnlace, onCerrar }) => {
   useAtras(true, onCerrar);
   const pista = useRef<HTMLDivElement>(null);
   const [actual, setActual] = useState(inicio);
@@ -217,6 +221,19 @@ export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onD
                 <Download className="w-5 h-5" strokeWidth={2} />
                 {m.kind === 'video' ? 'Descargar video' : 'Descargar foto'}
               </button>
+              {onCompartirEnlace && m.payload?.media?.original && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenu(false);
+                    onCompartirEnlace(m);
+                  }}
+                  className="w-full h-12 px-4 flex items-center gap-3 text-sm font-['Inter'] text-[#1F2933] dark:text-white hover:bg-[#F2F4F7] dark:hover:bg-white/5"
+                >
+                  <Link2 className="w-5 h-5" strokeWidth={2} />
+                  Enlace para compartir
+                </button>
+              )}
               {onResponder && (
                 <button
                   type="button"
@@ -257,7 +274,7 @@ export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onD
           style={{ overscrollBehaviorX: 'contain' }}
         >
           {items.map((x, i) => (
-            <Diapositiva key={x.id} m={x} cerca={Math.abs(i - actual) <= 1} activa={i === actual} obtenerUrl={obtenerUrl} />
+            <Diapositiva key={x.id} m={x} cerca={Math.abs(i - actual) <= 1} activa={i === actual} obtenerUrl={obtenerUrl} onDescargar={onDescargar} />
           ))}
         </div>
         {/* Flechas (computador) */}

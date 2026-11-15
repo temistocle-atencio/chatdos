@@ -55,6 +55,8 @@ export default defineConfig(() => {
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,woff,woff2}'],
           globIgnores: ['push-sw.js'],
+          // La página de fotos compartidas es aparte (no debe abrir la app)
+          navigateFallbackDenylist: [/compartir\.html/],
           importScripts: ['push-sw.js'],
           // Copias para usar sin internet (los archivos del chat se guardan cifrados)
           runtimeCaching: [
@@ -113,6 +115,15 @@ export default defineConfig(() => {
         },
       }),
     ],
+    build: {
+      rollupOptions: {
+        // Dos páginas: la app y la página pública de fotos compartidas por enlace
+        input: {
+          main: path.resolve(import.meta.dirname, 'index.html'),
+          compartir: path.resolve(import.meta.dirname, 'compartir.html'),
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),
