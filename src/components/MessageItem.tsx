@@ -319,6 +319,9 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               {busqueda ? resaltarTexto(text, busqueda) : text}
               {metadata}
             </div>
+          ) : esNotaDeVoz ? (
+            // Nota de voz: la hora sube a la línea del tiempo del audio (todo en una sola línea)
+            <div className="flow-root -mt-[19px]">{metadata}</div>
           ) : (
             <div className="flow-root">{metadata}</div>
           )}
@@ -372,6 +375,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   const groupedEntries = Object.entries(grouped);
 
   // Los stickers van sin burbuja, como en WhatsApp
+  const esNotaDeVoz =
+    !isDeleted && !message.view_once && message.kind === 'audio' && !!message.payload?.media && !message.payload.media.music;
   const esSticker = !isDeleted && !message.decryptionError && !!message.payload?.media?.sticker && !message.view_once;
 
   // Colores de la burbuja (también los usa la colita)

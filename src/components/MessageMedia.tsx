@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { FotoConZoom } from './FotoConZoom';
 import { Play, Pause, Music, Mic, Image as ImageIcon, Video, RotateCw, Loader2, X } from 'lucide-react';
 import { IconoVerUnaVez } from './Iconos';
+import { AvatarImage } from './AvatarImage';
 import type { DecryptedMessage } from '../types/chat';
 import { downloadDecrypted, getCachedUrl, formatDuration, formatBytes } from '../lib/media';
 
@@ -17,6 +18,9 @@ interface MessageMediaProps {
   onRetry: (messageId: string) => void;
   onOpenMedia: (url: string, kind: 'image' | 'video') => void;
   onOpenViewOnce: (message: DecryptedMessage) => void;
+  /** Foto y nombre de quien envió (se muestran en las notas de voz) */
+  autorAvatar?: string | null;
+  autorNombre?: string;
 }
 
 const KIND_LABEL = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' } as const;
@@ -43,6 +47,8 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
   onRetry,
   onOpenMedia,
   onOpenViewOnce,
+  autorAvatar = null,
+  autorNombre = '',
 }) => {
   const media = message.payload?.media;
   const [url, setUrl] = useState<string | undefined>(() => getCachedUrl(message.id));
@@ -256,13 +262,17 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
       fetchUrl={fetchUrl}
       upload={upload}
       onRetry={onRetry}
+      autorAvatar={autorAvatar}
+      autorNombre={autorNombre}
     />
   );
 };
 
-// Ondas de las notas de voz (se calculan una vez por mensaje y se guardan en memoria)
+// Ondas de las notas de voz (se calculan una vez por mensaje y se guardan en memoria).
+// Cada barra es el volumen promedio de su tramo (no el pico), de 0 a 1 respecto al tramo
+// más fuerte. Así se ve la forma real de lo que se dijo y el silencio queda como puntos.
 const ondas = new Map<string, number[]>();
-const BARRAS = 36;
+const BARRAS = 32;
 async function calcularOnda(id: string, url: string): Promise<number[] | null> {
   if (ondas.has(id)) return ondas.get(id)!;
   try {
@@ -273,20 +283,27 @@ async function calcularOnda(id: string, url: string): Promise<number[] | null> {
     ctx.close().catch(() => {});
     const canal = audio.getChannelData(0);
     const paso = Math.max(1, Math.floor(canal.length / BARRAS));
-    const picos: number[] = [];
+    const niveles: number[] = [];
     for (let b = 0; b < BARRAS; b++) {
-      let max = 0;
-      for (let i = b * paso; i < Math.min(canal.length, (b + 1) * paso); i += 16) max = Math.max(max, Math.abs(canal[i]));
-      picos.push(max);
+      let suma = 0;
+      let n = 0;
+      for (let i = b * paso; i < Math.min(canal.length, (b + 1) * paso); i += 8) {
+        suma += canal[i] * canal[i];
+        n++;
+      }
+      niveles.push(n ? Math.sqrt(suma / n) : 0);
     }
-    const tope = Math.max(...picos, 0.01);
-    const onda = picos.map((v) => Math.max(0.12, v / tope));
+    const tope = Math.max(...niveles, 0.005);
+    const onda = niveles.map((v) => Math.min(1, v / tope));
     ondas.set(id, onda);
     return onda;
   } catch {
     return null;
   }
 }
+
+// Alto de cada barra en px: el silencio es un punto y la voz normal queda a media altura
+const altoBarra = (v: number) => (v < 0.12 ? 3 : Math.round(4 + Math.pow(v, 1.3) * 16));
 
 // Velocidad de las notas de voz (se recuerda para la siguiente, como en WhatsApp)
 let velocidadNotas = 1;
@@ -301,7 +318,9 @@ const AudioPlayer: React.FC<{
   fetchUrl: () => Promise<string | undefined>;
   upload?: UploadState;
   onRetry: (id: string) => void;
-}> = ({ message, isMine, url, loading, error, fetchUrl, upload, onRetry }) => {
+  autorAvatar: string | null;
+  autorNombre: string;
+}> = ({ message, isMine, url, loading, error, fetchUrl, upload, onRetry, autorAvatar, autorNombre }) => {
   const media = message.payload?.media;
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -312,6 +331,7 @@ const AudioPlayer: React.FC<{
   const esNota = !media?.music;
   const [onda, setOnda] = useState<number[] | null>(() => ondas.get(message.id) ?? null);
   const [velocidad, setVelocidad] = useState(velocidadNotas);
+  const arrastrando = useRef(false);
 
   useEffect(() => {
     if (!esNota || !url || onda) return;
@@ -329,10 +349,11 @@ const AudioPlayer: React.FC<{
     if (audioRef.current) audioRef.current.playbackRate = v;
   };
 
-  const saltarA = (e: React.MouseEvent<HTMLDivElement>) => {
+  // Tocar o arrastrar sobre las barras para adelantar o retroceder
+  const saltarA = (e: React.PointerEvent<HTMLDivElement>) => {
     const caja = e.currentTarget.getBoundingClientRect();
     const t = Math.max(0, Math.min(1, (e.clientX - caja.left) / caja.width)) * (duration || 0);
-    if (audioRef.current) audioRef.current.currentTime = t;
+    if (audioRef.current && audioRef.current.src) audioRef.current.currentTime = t;
     setTime(t);
   };
 
@@ -343,13 +364,14 @@ const AudioPlayer: React.FC<{
       a.pause();
       return;
     }
-    if (!url) {
+    if (!url && !a.src) {
       const u = await fetchUrl();
       if (!u) return;
       a.src = u;
     }
     try {
       if (esNota) a.playbackRate = velocidad;
+      if (time > 0 && Math.abs(a.currentTime - time) > 0.3) a.currentTime = time;
       await a.play();
     } catch {
       // iPhone a veces pide un segundo toque después de descargar; el botón queda listo
@@ -361,35 +383,87 @@ const AudioPlayer: React.FC<{
   }, [url]);
 
   const pending = upload && (upload.failed || upload.pct < 100);
+  const textoTiempo = pending
+    ? upload?.failed
+      ? 'No se envió. Toca para reintentar'
+      : `Enviando ${upload?.pct} %`
+    : error
+      ? 'No se pudo cargar'
+      : formatDuration(playing || time ? time : duration);
 
-  return (
-    <div className="min-w-[220px] max-w-[260px] py-0.5">
-      {media?.music && (
-        <div className={`flex items-center gap-1.5 mb-1 text-xs font-['Inter'] ${muted}`}>
-          <Music className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
-          <span className="truncate">{media.name || 'Canción'}</span>
-          <span className="shrink-0">· {formatBytes(media.size || 0)}</span>
-        </div>
-      )}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={pending ? () => upload?.failed && onRetry(message.id) : toggle}
-          className="w-10 h-10 shrink-0 flex items-center justify-center rounded-[5px]"
-          aria-label={playing ? 'Pausar' : 'Reproducir'}
-        >
-          {pending ? (
-            upload?.failed ? <RotateCw className="w-6 h-6" strokeWidth={2} /> : <Loader2 className="w-6 h-6 animate-spin" strokeWidth={2} />
-          ) : loading ? (
-            <Loader2 className="w-6 h-6 animate-spin" strokeWidth={2} />
-          ) : playing ? (
-            <Pause className="w-7 h-7" strokeWidth={2} />
-          ) : (
-            <Play className="w-7 h-7" strokeWidth={2} />
-          )}
-        </button>
-        <div className="flex-1 min-w-0">
-          {esNota && onda ? (
+  const iconoBoton = pending ? (
+    upload?.failed ? <RotateCw className="w-6 h-6" strokeWidth={2} /> : <Loader2 className="w-6 h-6 animate-spin" strokeWidth={2} />
+  ) : loading ? (
+    <Loader2 className="w-6 h-6 animate-spin" strokeWidth={2} />
+  ) : playing ? (
+    <Pause className="w-7 h-7" fill="currentColor" strokeWidth={0} />
+  ) : (
+    <Play className="w-7 h-7" fill="currentColor" strokeWidth={0} />
+  );
+
+  const audio = (
+    <audio
+      ref={audioRef}
+      preload="metadata"
+      playsInline
+      onPlay={() => setPlaying(true)}
+      onPause={() => setPlaying(false)}
+      onEnded={() => {
+        setPlaying(false);
+        setTime(0);
+      }}
+      onTimeUpdate={(e) => !arrastrando.current && setTime(e.currentTarget.currentTime)}
+      onLoadedMetadata={(e) => {
+        const d = e.currentTarget.duration;
+        if (Number.isFinite(d) && d > 0) setDuration(d);
+      }}
+    />
+  );
+
+  // ----- Nota de voz (como WhatsApp): foto o velocidad · play · barras -----
+  if (esNota) {
+    const avance = duration > 0 ? Math.min(1, time / duration) : 0;
+    // La velocidad solo aparece cuando ya se está escuchando; antes, la foto de quien grabó
+    const mostrarVelocidad = !pending && (playing || time > 0);
+    const fondoBurbuja = isMine ? 'bg-[#005198]' : 'bg-white dark:bg-[#003A73]';
+    const colorHecho = isMine ? 'bg-white' : 'bg-[#005198] dark:bg-white';
+    const colorFalta = isMine ? 'bg-white/40' : 'bg-[#5B6670]/35 dark:bg-white/35';
+    return (
+      <div className="w-[260px] max-w-full pt-0.5">
+        <div className="flex items-center gap-1.5">
+          <div className="w-12 h-12 shrink-0 flex items-center justify-center">
+            {mostrarVelocidad ? (
+              <button
+                type="button"
+                onClick={cambiarVelocidad}
+                className={`h-7 min-w-[46px] px-2 rounded-full text-[13px] font-['Poppins'] font-semibold ${
+                  isMine ? 'bg-white/20 text-white' : 'bg-[#F2F4F7] dark:bg-white/15 text-[#1F2933] dark:text-white'
+                }`}
+                aria-label={`Velocidad: ${velocidad}x. Toca para cambiarla`}
+              >
+                {velocidad === 1 ? '1×' : velocidad === 1.5 ? '1.5×' : '2×'}
+              </button>
+            ) : (
+              <div className="relative">
+                <AvatarImage avatarPath={autorAvatar} name={autorNombre} size={46} className={`!border-0 ${isMine ? '' : 'dark:!bg-[#005198]'}`} />
+                <span
+                  className={`absolute -bottom-1 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center ${fondoBurbuja} ${muted}`}
+                  aria-hidden="true"
+                >
+                  <Mic className="w-3.5 h-3.5" strokeWidth={2.25} />
+                </span>
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={pending ? () => upload?.failed && onRetry(message.id) : toggle}
+            className="w-9 h-10 shrink-0 flex items-center justify-center"
+            aria-label={playing ? 'Pausar' : 'Reproducir'}
+          >
+            {iconoBoton}
+          </button>
+          <div className="flex-1 min-w-0 pr-1">
             <div
               role="slider"
               aria-label="Avance de la nota de voz"
@@ -397,86 +471,82 @@ const AudioPlayer: React.FC<{
               aria-valuemax={Math.round(duration || 0)}
               aria-valuenow={Math.round(time)}
               tabIndex={0}
-              onClick={saltarA}
-              className="h-7 flex items-center gap-[2px] cursor-pointer"
-            >
-              {onda.map((v, i) => {
-                const hecho = duration > 0 && i / onda.length < time / duration;
-                return (
-                  <span
-                    key={i}
-                    className={`flex-1 rounded-full ${
-                      hecho
-                        ? isMine
-                          ? 'bg-white'
-                          : 'bg-[#005198] dark:bg-white'
-                        : isMine
-                          ? 'bg-white/40'
-                          : 'bg-[#5B6670]/35 dark:bg-white/35'
-                    }`}
-                    style={{ height: `${Math.round(v * 100)}%` }}
-                  />
-                );
-              })}
-            </div>
-          ) : (
-            <input
-              type="range"
-              min={0}
-              max={duration || 1}
-              step={0.1}
-              value={time}
-              onChange={(e) => {
-                const t = Number(e.target.value);
-                if (audioRef.current) audioRef.current.currentTime = t;
+              onPointerDown={(e) => {
+                arrastrando.current = true;
+                e.currentTarget.setPointerCapture?.(e.pointerId);
+                saltarA(e);
+              }}
+              onPointerMove={(e) => arrastrando.current && saltarA(e)}
+              onPointerUp={() => (arrastrando.current = false)}
+              onPointerCancel={() => (arrastrando.current = false)}
+              onKeyDown={(e) => {
+                const d = e.key === 'ArrowRight' ? 5 : e.key === 'ArrowLeft' ? -5 : 0;
+                if (!d) return;
+                const t = Math.max(0, Math.min(duration, time + d));
+                if (audioRef.current?.src) audioRef.current.currentTime = t;
                 setTime(t);
               }}
-              className={`w-full h-1 ${track}`}
-              aria-label="Avance del audio"
-            />
-          )}
-          <div className={`flex justify-between text-[11px] font-['Inter'] mt-0.5 ${muted}`}>
-            <span className="flex items-center gap-1">
-              {!media?.music && <Mic className="w-3 h-3" strokeWidth={2} />}
-              {pending
-                ? upload?.failed
-                  ? 'No se envió. Toca para reintentar'
-                  : `Enviando ${upload?.pct} %`
-                : error
-                  ? 'No se pudo cargar'
-                  : formatDuration(playing || time ? time : duration)}
-            </span>
-            {esNota && !pending && (
-              <button
-                type="button"
-                onClick={cambiarVelocidad}
-                className={`px-1.5 rounded-full text-[10px] font-['Poppins'] font-semibold leading-4 ${
-                  isMine ? 'bg-white/20 text-white' : 'bg-[#F2F4F7] dark:bg-white/15 text-[#5B6670] dark:text-white'
-                }`}
-                aria-label="Velocidad de la nota de voz"
-              >
-                {velocidad === 1 ? '1x' : velocidad === 1.5 ? '1.5x' : '2x'}
-              </button>
-            )}
+              className="relative h-7 flex items-center justify-between cursor-pointer touch-none"
+            >
+              {(onda ?? Array.from({ length: BARRAS }, () => 0)).map((v, i, l) => (
+                <span
+                  key={i}
+                  className={`w-[3px] shrink-0 rounded-full ${(i + 0.5) / l.length <= avance ? colorHecho : colorFalta}`}
+                  style={{ height: altoBarra(v) }}
+                />
+              ))}
+              {/* Punto que marca por dónde va */}
+              <span
+                className={`absolute top-1/2 w-3.5 h-3.5 -mt-[7px] -ml-[7px] rounded-full ${colorHecho} shadow-[0_1px_2px_rgba(0,0,0,0.2)]`}
+                style={{ left: `${avance * 100}%` }}
+                aria-hidden="true"
+              />
+            </div>
+            {/* El tiempo a la izquierda; la hora y los chulitos van en la misma línea, a la derecha */}
+            <div className={`h-4 mt-0.5 text-[11px] leading-4 font-['Inter'] tabular-nums truncate ${muted}`}>{textoTiempo}</div>
           </div>
         </div>
+        {audio}
       </div>
-      <audio
-        ref={audioRef}
-        preload="metadata"
-        playsInline
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => {
-          setPlaying(false);
-          setTime(0);
-        }}
-        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => {
-          const d = e.currentTarget.duration;
-          if (Number.isFinite(d) && d > 0) setDuration(d);
-        }}
-      />
+    );
+  }
+
+  // ----- Canción o archivo de audio -----
+  return (
+    <div className="min-w-[220px] max-w-[260px] py-0.5">
+      <div className={`flex items-center gap-1.5 mb-1 text-xs font-['Inter'] ${muted}`}>
+        <Music className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
+        <span className="truncate">{media?.name || 'Canción'}</span>
+        <span className="shrink-0">· {formatBytes(media?.size || 0)}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={pending ? () => upload?.failed && onRetry(message.id) : toggle}
+          className="w-10 h-10 shrink-0 flex items-center justify-center rounded-[5px]"
+          aria-label={playing ? 'Pausar' : 'Reproducir'}
+        >
+          {iconoBoton}
+        </button>
+        <div className="flex-1 min-w-0">
+          <input
+            type="range"
+            min={0}
+            max={duration || 1}
+            step={0.1}
+            value={time}
+            onChange={(e) => {
+              const t = Number(e.target.value);
+              if (audioRef.current) audioRef.current.currentTime = t;
+              setTime(t);
+            }}
+            className={`w-full h-1 ${track}`}
+            aria-label="Avance del audio"
+          />
+          <div className={`text-[11px] font-['Inter'] mt-0.5 ${muted}`}>{textoTiempo}</div>
+        </div>
+      </div>
+      {audio}
     </div>
   );
 };

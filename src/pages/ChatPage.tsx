@@ -2473,6 +2473,8 @@ export const ChatPage: React.FC = () => {
                           onRetry={retryUpload}
                           onOpenMedia={(url, kind) => setViewer({ url, kind })}
                           onOpenViewOnce={openViewOnce}
+                          autorAvatar={isMine ? myProfile?.avatar_path : partner?.avatar_path}
+                          autorNombre={isMine ? myProfile?.display_name || myProfile?.username : partnerName}
                         />
                       ) : undefined
                     }
