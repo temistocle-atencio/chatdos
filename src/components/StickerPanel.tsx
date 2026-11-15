@@ -8,8 +8,11 @@ import {
   coleccionEnMemoria,
   urlSticker,
   esAnimado,
+  limpiarRepetidos,
   type Sticker,
 } from '../lib/stickers';
+
+let revisadoEstaVez = false; // los repetidos se revisan una vez cada vez que se abre la app
 import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { StickerEditor } from './StickerEditor';
 
@@ -78,7 +81,15 @@ export const StickerPanel: React.FC<{
   useEffect(() => {
     const quitar = alCambiarColeccion(() => setLista(coleccionEnMemoria(userId)));
     cargarColeccion(userId, miLlavePublica)
-      .then(setLista)
+      .then((l) => {
+        setLista(l);
+        if (!revisadoEstaVez && l.length > 1) {
+          revisadoEstaVez = true;
+          limpiarRepetidos(userId, miLlavePublica)
+            .then((n) => n && onAviso(`Se borraron ${n} sticker${n > 1 ? 's' : ''} repetido${n > 1 ? 's' : ''}`))
+            .catch(() => {});
+        }
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'No se pudieron cargar tus stickers'));
     return () => {
       quitar();
@@ -114,7 +125,7 @@ export const StickerPanel: React.FC<{
     setAgregando(null);
     const partes = [];
     if (nuevos) partes.push(`${nuevos} agregado${nuevos > 1 ? 's' : ''}`);
-    if (repetidos) partes.push(`${repetidos} ya lo tenías`);
+    if (repetidos) partes.push(`${repetidos} repetido${repetidos > 1 ? 's' : ''} (no se agregó)`);
     if (partes.length) onAviso(partes.join(' · '));
     if (problema) setError(problema);
   };

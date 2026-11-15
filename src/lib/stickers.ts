@@ -13,6 +13,7 @@ export interface MetaSticker {
   h: number;
   anim: boolean; // animado (GIF / WebP animado)
   hash: string; // para no guardar el mismo sticker dos veces
+  huella?: string; // "huella visual": detecta el mismo sticker aunque el archivo sea distinto
 }
 
 export interface Sticker {
@@ -164,12 +165,72 @@ export async function prepararSticker(entrada: Blob): Promise<{ blob: Blob; meta
   }
 }
 
+// ---------- Huella visual (para encontrar repetidos) ----------
+// Se achica la imagen a 32×32 en grises (lo transparente cuenta como gris) y se guarda.
+// Dos stickers son el mismo si casi ningún punto cambia mucho, aunque vengan de archivos distintos.
+const LADO_HUELLA = 32;
+
+export async function huellaVisual(b: Blob): Promise<string> {
+  const url = URL.createObjectURL(b);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = c.height = LADO_HUELLA;
+    const ctx = c.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(img, 0, 0, LADO_HUELLA, LADO_HUELLA);
+    const d = ctx.getImageData(0, 0, LADO_HUELLA, LADO_HUELLA).data;
+    const v = new Uint8Array(LADO_HUELLA * LADO_HUELLA);
+    for (let i = 0; i < v.length; i++) {
+      const a = d[i * 4 + 3] / 255;
+      const luz = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
+      v[i] = Math.round(luz * a + 127 * (1 - a));
+    }
+    // La forma (ancho/alto) va adelante para no confundir un sticker cuadrado con uno alargado
+    const forma = Math.round((img.naturalWidth / Math.max(1, img.naturalHeight)) * 10);
+    let bin = '';
+    v.forEach((x) => (bin += String.fromCharCode(x)));
+    return `${forma}:${btoa(bin)}`;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+const vectores = new Map<string, Uint8Array>();
+function vector(h: string): Uint8Array {
+  let v = vectores.get(h);
+  if (!v) {
+    const bin = atob(h.slice(h.indexOf(':') + 1));
+    v = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    vectores.set(h, v);
+  }
+  return v;
+}
+
+/** Cuántos puntos cambian mucho entre dos huellas (0 = idénticas) */
+function diferencia(a: string, b: string): number {
+  if (a.slice(0, a.indexOf(':')) !== b.slice(0, b.indexOf(':'))) return Infinity;
+  const va = vector(a);
+  const vb = vector(b);
+  if (va.length !== vb.length) return Infinity;
+  let n = 0;
+  for (let i = 0; i < va.length; i++) if (Math.abs(va[i] - vb[i]) > 48) n++;
+  return n;
+}
+
+const PARECIDOS = 3; // hasta 3 puntos de 1024 = el mismo sticker (un cambio pequeño, como un texto, da 10 o más)
+
+const esRepetido = (a: MetaSticker, b: Omit<MetaSticker, 'key'>) =>
+  a.hash === b.hash || (!!a.huella && !!b.huella && a.anim === b.anim && diferencia(a.huella, b.huella) <= PARECIDOS);
+
 // ---------- Agregar / quitar / usar ----------
 /** Agrega un sticker a la colección. Si ya estaba, devuelve el que existe. */
 export async function agregarSticker(userId: string, miLlavePublica: unknown, entrada: Blob): Promise<{ sticker: Sticker; nuevo: boolean }> {
   const lista = await cargarColeccion(userId, miLlavePublica);
-  const { blob, meta } = await prepararSticker(entrada);
-  const repetido = lista.find((s) => s.meta.hash === meta.hash);
+  const { blob, meta: base } = await prepararSticker(entrada);
+  const meta = { ...base, huella: await huellaVisual(blob).catch(() => undefined) };
+  const repetido = lista.find((s) => esRepetido(s.meta, meta));
   if (repetido) return { sticker: repetido, nuevo: false };
 
   const id = crypto.randomUUID();
@@ -208,6 +269,40 @@ export async function borrarSticker(userId: string, s: Sticker): Promise<void> {
     coleccion = { userId, lista: coleccion.lista.filter((x) => x.id !== s.id) };
     avisar();
   }
+}
+
+/**
+ * Busca stickers repetidos en la colección y los borra (se queda el que se usó más reciente).
+ * A los que no tienen huella se les calcula una vez y se guarda (cifrada).
+ */
+let limpiando: Promise<number> | null = null;
+export function limpiarRepetidos(userId: string, miLlavePublica: unknown): Promise<number> {
+  if (limpiando) return limpiando;
+  limpiando = (async () => {
+    const lista = await cargarColeccion(userId, miLlavePublica);
+    const llave = await llaveColeccion(userId, miLlavePublica);
+    for (const s of lista) {
+      if (s.meta.huella) continue;
+      try {
+        const huella = await huellaVisual(await blobSticker(s));
+        s.meta = { ...s.meta, huella };
+        const cif = await encryptJSON(llave, s.meta);
+        await supabase.from('stickers').update({ meta: cif.ciphertext, iv: cif.iv }).eq('id', s.id);
+      } catch {
+        /* uno que no se puede abrir se deja como está */
+      }
+    }
+    // La lista viene del más usado al menos usado: se conserva el primero de cada grupo
+    const quedan: Sticker[] = [];
+    const sobran: Sticker[] = [];
+    for (const s of lista) (quedan.some((q) => esRepetido(q.meta, s.meta)) ? sobran : quedan).push(s);
+    for (const s of sobran) await borrarSticker(userId, s).catch(() => {});
+    return sobran.length;
+  })().finally(() => {
+    // Se puede volver a revisar más tarde (por ejemplo, después de importar muchos)
+    setTimeout(() => (limpiando = null), 60_000);
+  });
+  return limpiando;
 }
 
 /** Al enviar uno, pasa de primero (como los "recientes" de WhatsApp). */
