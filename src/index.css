@@ -117,3 +117,17 @@ a {
   70% { transform: scale(1); opacity: 1; }
   100% { transform: scale(1.1); opacity: 0; }
 }
+
+/* ===== Botones que responden al instante =====
+   Al tocar, el botón se oscurece y se hunde un poco enseguida (sin esperar a que termine lo que hace). */
+button,
+[role='button'],
+label[for] {
+  touch-action: manipulation;
+}
+button:not(:disabled):active,
+[role='button']:active {
+  filter: brightness(0.88);
+  scale: 0.96;
+  transition: scale 0s, filter 0s;
+}
