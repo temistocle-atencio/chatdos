@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FotoConZoom } from './FotoConZoom';
-import { Play, Pause, Music, Mic, Image as ImageIcon, Video, Eye, EyeOff, RotateCw, Loader2, X } from 'lucide-react';
+import { Play, Pause, Music, Mic, Image as ImageIcon, Video, RotateCw, Loader2, X } from 'lucide-react';
+import { IconoVerUnaVez } from './Iconos';
 import type { DecryptedMessage } from '../types/chat';
 import { downloadDecrypted, getCachedUrl, formatDuration, formatBytes } from '../lib/media';
 
@@ -103,7 +104,6 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
   // ----- Ver una vez -----
   if (message.view_once) {
     const opened = !!message.viewed_at;
-    const Icon = opened ? EyeOff : Eye;
     const label = `${KIND_LABEL[kind]} · Ver una vez`;
     const clickable = !isMine && !opened;
     return (
@@ -114,7 +114,7 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
           onClick={() => clickable && onOpenViewOnce(message)}
           className={`flex items-center gap-2.5 min-w-[190px] py-1.5 pr-2 text-left ${clickable ? 'cursor-pointer' : 'cursor-default'}`}
         >
-          <Icon className={`w-6 h-6 shrink-0 ${opened ? muted : ''}`} strokeWidth={2} />
+          <IconoVerUnaVez className={`w-6 h-6 shrink-0 ${opened ? muted : ''}`} />
           <span className="flex flex-col">
             <span className={`text-[14px] font-['Inter'] font-medium ${opened ? `italic ${muted}` : ''}`}>
               {opened ? 'Abierto' : label}

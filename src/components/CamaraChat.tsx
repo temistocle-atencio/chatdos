@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Zap, ZapOff, Image as ImageIcon, SwitchCamera, Check } from 'lucide-react';
 import { MAX_VIDEO_SECONDS } from '../lib/media';
+import { useAtras } from '../lib/atras';
 
 // Cámara dentro de ChatDos (como WhatsApp):
 //   Foto:  un toque = foto · mantener presionado = video (al soltar se detiene)
@@ -117,17 +118,7 @@ export const CamaraChat: React.FC<{
   }, []);
 
   // Botón atrás del celular cierra la cámara
-  const cerrarRef = useRef(onCerrar);
-  cerrarRef.current = onCerrar;
-  useEffect(() => {
-    history.pushState({ ...(history.state ?? {}), camara: true }, '');
-    const alVolver = () => cerrarRef.current();
-    window.addEventListener('popstate', alVolver);
-    return () => {
-      window.removeEventListener('popstate', alVolver);
-      if (history.state?.camara) history.back();
-    };
-  }, []);
+  useAtras(true, onCerrar);
 
   // Reloj mientras graba
   useEffect(() => {

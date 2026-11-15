@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, User } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAtras } from '../lib/atras';
 
 const cache = new Map<string, string>();
 
@@ -32,15 +33,7 @@ export const FotoPerfilVisor: React.FC<{ avatarPath: string | null; nombre: stri
   }, [avatarPath]);
 
   // El botón "atrás" del celular cierra la foto
-  useEffect(() => {
-    history.pushState({ fotoPerfil: true }, '');
-    const alVolver = () => onCerrar();
-    window.addEventListener('popstate', alVolver);
-    return () => {
-      window.removeEventListener('popstate', alVolver);
-      if (history.state?.fotoPerfil) history.back();
-    };
-  }, [onCerrar]);
+  useAtras(true, onCerrar);
 
   return (
     <div
