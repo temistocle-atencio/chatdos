@@ -7,14 +7,17 @@ export interface Tema {
   nombre: string;
   fondo?: string; // color de fondo
   lineas?: string; // color del dibujo
-  /** 'dibujitos': el dibujo nuevo en vectores, repetido como mosaico (nítido en cualquier pantalla) */
-  dibujo?: 'dibujitos';
+  /** Dibujo del tema (los dos en vectores y repetidos como mosaico: nítidos en cualquier pantalla).
+   *  'lineas' (el de siempre) si no se dice otro. */
+  dibujo?: 'dibujitos' | 'lineas';
   /** Colores para el modo oscuro (si no tiene, se oscurece con una capa negra) */
   noche?: { fondo: string; lineas: string };
 }
 
 // Dibujos de los temas (archivos livianos). Cada tema les pone sus colores.
-export const DIBUJO = `${import.meta.env.BASE_URL}temas/lineas.png`;
+export const DIBUJO = `${import.meta.env.BASE_URL}temas/lineas.svg`;
+/** Ancho del mosaico del dibujo de líneas en pantalla (px): en el celular se ve como antes */
+export const TAM_LINEAS = 560;
 export const DIBUJITOS = `${import.meta.env.BASE_URL}temas/dibujos.svg`;
 /** Tamaño del mosaico de dibujitos en pantalla (px) */
 export const TAM_DIBUJITOS = 420;
