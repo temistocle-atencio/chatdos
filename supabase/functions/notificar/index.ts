@@ -4,9 +4,11 @@
 //   { accion: "llamada", chat_id, tipo } -> avisa a la otra persona que la están llamando
 //   { accion: "turn" }                  -> credenciales del servidor de paso para las llamadas
 //   { accion: "enlace", url }           -> vista previa de un enlace (título, descripción e imagen)
+//   { accion: "original_subir" | "original_bajar" | "original_borrar" } -> fotos en calidad Original (R2)
 // La notificación NUNCA lleva el texto del mensaje (está cifrado de extremo a extremo):
 // solo dice quién escribió y qué tipo de mensaje es.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { AwsClient } from 'npm:aws4fetch@1.0.20';
 import { createVapidKeys, sendPush } from './webpush.ts';
 
 const SUBJECT = 'https://temistocle-atencio.github.io/chatdos/';
@@ -209,6 +211,43 @@ Deno.serve(async (req) => {
     // Lee la página una vez (sin guardar nada) y devuelve título, descripción, sitio y una imagen pequeña.
     if (cuerpo.accion === 'enlace') {
       return responder(await vistaPrevia(String(cuerpo.url ?? '')));
+    }
+
+    // ---------- Fotos en calidad Original (Cloudflare R2) ----------
+    // Solo se entregan permisos temporales para subir o bajar el archivo CIFRADO; aquí nunca se ve la foto.
+    if (cuerpo.accion === 'original_subir' || cuerpo.accion === 'original_bajar' || cuerpo.accion === 'original_borrar') {
+      const cuenta = Deno.env.get('R2_ACCOUNT_ID');
+      const llaveId = Deno.env.get('R2_ACCESS_KEY_ID');
+      const secreto = Deno.env.get('R2_SECRET_ACCESS_KEY');
+      const balde = Deno.env.get('R2_BUCKET') || 'chatdos-originales';
+      if (!cuenta || !llaveId || !secreto) return responder({ error: 'El servicio de fotos originales no está configurado.' }, 503);
+      const r2 = new AwsClient({ accessKeyId: llaveId, secretAccessKey: secreto, service: 's3', region: 'auto' });
+
+      let ruta = '';
+      let chatId = '';
+      if (cuerpo.accion === 'original_subir') {
+        chatId = String(cuerpo.chat_id ?? '');
+        const tam = Number(cuerpo.tam ?? 0);
+        if (!tam || tam > 260 * 1024 * 1024) return responder({ error: 'La foto es demasiado grande (máximo 250 MB).' }, 400);
+        ruta = `${chatId}/${crypto.randomUUID()}.bin`;
+      } else {
+        ruta = String(cuerpo.ruta ?? '');
+        chatId = ruta.split('/')[0];
+      }
+      if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.bin$/.test(ruta)) return responder({ error: 'Archivo no válido' }, 400);
+      const { data: soy } = await servicio.from('chat_members').select('user_id').eq('chat_id', chatId).eq('user_id', yo).maybeSingle();
+      if (!soy) return responder({ error: 'No eres parte de este chat' }, 403);
+
+      const direccion = new URL(`https://${cuenta}.r2.cloudflarestorage.com/${balde}/${ruta}`);
+      if (cuerpo.accion === 'original_borrar') {
+        const r = await r2.fetch(direccion.href, { method: 'DELETE' });
+        return responder({ ok: r.ok });
+      }
+      direccion.searchParams.set('X-Amz-Expires', cuerpo.accion === 'original_subir' ? '1800' : '900');
+      const firmado = await r2.sign(new Request(direccion.href, { method: cuerpo.accion === 'original_subir' ? 'PUT' : 'GET' }), {
+        aws: { signQuery: true },
+      });
+      return responder({ url: firmado.url, ruta });
     }
 
     // ---------- Servidor de paso para llamadas (TURN de Cloudflare) ----------

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { ArrowLeft, MoreVertical, Download, Forward, ChevronLeft, ChevronRight, Loader2, Play, Reply } from 'lucide-react';
 import { FotoConZoom } from './FotoConZoom';
 import { useAtras } from '../lib/atras';
+import { bajarOriginal } from '../lib/originales';
 import { formatMessageDateSeparator, formatMessageTime } from '../lib/formatters';
 import type { DecryptedMessage } from '../types/chat';
 
@@ -34,6 +35,19 @@ const Diapositiva: React.FC<{
   const [url, setUrl] = useState<string | undefined>();
   const [error, setError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const original = m.kind === 'image' ? m.payload?.media?.original : undefined;
+  const [verOriginal, setVerOriginal] = useState<{ pct: number; listo: boolean; error?: boolean } | null>(null);
+  const abrirOriginal = async () => {
+    if (!original) return;
+    setVerOriginal({ pct: 0, listo: false });
+    try {
+      const u = await bajarOriginal(original, (pct) => setVerOriginal({ pct, listo: false }));
+      setUrl(u);
+      setVerOriginal({ pct: 100, listo: true });
+    } catch {
+      setVerOriginal({ pct: 0, listo: false, error: true });
+    }
+  };
 
   useEffect(() => {
     if (!cerca || url) return;
@@ -75,9 +89,35 @@ const Diapositiva: React.FC<{
       ) : (
         <FotoConZoom src={url} />
       )}
+      {/* Foto enviada en calidad Original: se puede ver completa (con todo el detalle al hacer zoom) */}
+      {original && url && activa && !verOriginal?.listo && (
+        <button
+          type="button"
+          onClick={() => void abrirOriginal()}
+          disabled={!!verOriginal && !verOriginal.error}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 h-10 px-4 rounded-full bg-black/65 border border-white/30 text-white text-sm font-['Inter'] flex items-center gap-2"
+        >
+          {verOriginal && !verOriginal.error ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} /> Bajando original… {verOriginal.pct}%
+            </>
+          ) : verOriginal?.error ? (
+            'No se pudo. Tocar para reintentar'
+          ) : (
+            `Ver original · ${formatearPeso(original.size)}`
+          )}
+        </button>
+      )}
+      {verOriginal?.listo && activa && (
+        <span className="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 h-7 rounded-full bg-black/55 text-white text-xs font-['Inter'] flex items-center">
+          Original · {formatearPeso(original?.size ?? 0)}
+        </span>
+      )}
     </div>
   );
 };
+
+const formatearPeso = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
 export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onDescargar, onReenviar, onResponder, onCerrar }) => {
   useAtras(true, onCerrar);

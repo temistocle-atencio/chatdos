@@ -18,10 +18,14 @@ export interface PendingMedia {
   name?: string;
   music?: boolean;
   sticker?: boolean;
-  /** Foto original (sin reducir): se usa si se envía en HD */
+  /** Foto original (sin reducir): se usa si se envía en HD u Original */
   original?: Blob;
   hd?: boolean;
+  /** Se sube también la foto original completa (calidad Original) */
+  subirOriginal?: Blob;
 }
+
+export type Calidad = 'normal' | 'hd' | 'original';
 
 // Menú para elegir qué adjuntar (cuadrícula como en WhatsApp)
 export const AttachSheet: React.FC<{
@@ -73,7 +77,7 @@ export const MediaComposer: React.FC<{
   medias: PendingMedia[];
   onCancel: () => void;
   onRemove: (index: number) => void;
-  onSend: (opts: { caption: string; viewOnce: boolean; hd: boolean }) => void;
+  onSend: (opts: { caption: string; viewOnce: boolean; calidad: Calidad }) => void;
   /** Reemplaza un archivo por su versión editada */
   onCambiar?: (index: number, m: PendingMedia) => void;
   userId?: string;
@@ -81,7 +85,25 @@ export const MediaComposer: React.FC<{
 }> = ({ medias, onCancel, onRemove, onSend, onCambiar, userId, miLlavePublica }) => {
   const [caption, setCaption] = useState('');
   const [viewOnce, setViewOnce] = useState(false);
-  const [hd, setHd] = useState(false); // fotos en alta calidad
+  // Calidad de las fotos: normal → HD → Original (se recuerda para la próxima vez)
+  const [calidad, setCalidad] = useState<Calidad>(() => {
+    try {
+      const c = localStorage.getItem('chatdos:calidadFotos');
+      return c === 'hd' || c === 'original' ? c : 'normal';
+    } catch {
+      return 'normal';
+    }
+  });
+  const cambiarCalidad = () => {
+    const n: Calidad = calidad === 'normal' ? 'hd' : calidad === 'hd' ? 'original' : 'normal';
+    setCalidad(n);
+    try {
+      localStorage.setItem('chatdos:calidadFotos', n);
+    } catch {
+      /* sin almacenamiento */
+    }
+  };
+  const pesoOriginal = medias.reduce((t, m) => t + (m.kind === 'image' && !m.sticker && m.original ? m.original.size : 0), 0);
   const [actual, setActual] = useState(0);
   const [urls, setUrls] = useState<string[]>([]);
   const [editarFoto, setEditarFoto] = useState<HerramientaFoto | null>(null);
@@ -156,15 +178,15 @@ export const MediaComposer: React.FC<{
         {medias.some((m) => m.kind === 'image' && !m.sticker && m.original) && (
           <button
             type="button"
-            onClick={() => setHd((v) => !v)}
-            className={`h-11 px-3 rounded-full flex items-center justify-center text-[13px] font-['Poppins'] font-bold tracking-wide ${
-              hd ? 'bg-white text-[#1F2933]' : 'bg-black/45 text-white'
+            onClick={cambiarCalidad}
+            className={`h-11 px-3 rounded-full flex flex-col items-center justify-center font-['Poppins'] font-bold leading-none ${
+              calidad === 'normal' ? 'bg-black/45 text-white' : calidad === 'hd' ? 'bg-white text-[#1F2933]' : 'bg-[#F28C1B] text-[#1F2933]'
             }`}
-            aria-pressed={hd}
-            aria-label="Enviar en HD (más calidad)"
-            title={hd ? 'HD: más calidad (pesa más)' : 'Calidad normal'}
+            aria-label={`Calidad de la foto: ${calidad === 'normal' ? 'normal' : calidad === 'hd' ? 'HD' : 'original'}. Toca para cambiar`}
+            title="Normal → HD → Original"
           >
-            HD
+            <span className={`text-[13px] tracking-wide ${calidad === 'normal' ? 'line-through opacity-80' : ''}`}>{calidad === 'original' ? 'ORIGINAL' : 'HD'}</span>
+            {calidad === 'original' && <span className="text-[9px] font-['Inter'] font-semibold mt-0.5">{formatBytes(pesoOriginal)}</span>}
           </button>
         )}
         {sePuedeEditar && media.kind === 'image' && (
@@ -287,7 +309,7 @@ export const MediaComposer: React.FC<{
         )}
         <button
           type="button"
-          onClick={() => onSend({ caption: caption.trim(), viewOnce, hd })}
+          onClick={() => onSend({ caption: caption.trim(), viewOnce, calidad })}
           disabled={preparando}
           className="w-12 h-12 shrink-0 flex items-center justify-center rounded-full bg-[#F28C1B] text-[#1F2933] disabled:opacity-50"
           aria-label="Enviar"

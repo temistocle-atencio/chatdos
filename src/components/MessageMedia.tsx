@@ -194,8 +194,10 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
           <img src={media.thumb} alt="" className="absolute inset-0 w-full h-full object-cover blur-md scale-110" />
         )}
         {url && <img src={url} alt="Foto" className="absolute inset-0 w-full h-full object-cover" draggable={false} />}
-        {media?.hd && (
-          <span className="absolute left-1.5 bottom-1.5 px-1 rounded-[3px] bg-white/90 text-[#1F2933] text-[10px] font-['Poppins'] font-bold leading-4">HD</span>
+        {(media?.hd || media?.original) && (
+          <span className="absolute left-1.5 bottom-1.5 px-1 rounded-[3px] bg-white/90 text-[#1F2933] text-[10px] font-['Poppins'] font-bold leading-4">
+            {media?.original ? 'ORIGINAL' : 'HD'}
+          </span>
         )}
         {!url && (loading || (!error && !upload)) && (
           <span className="absolute inset-0 flex items-center justify-center text-white">

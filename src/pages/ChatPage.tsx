@@ -106,7 +106,8 @@ const numeroDe = (m: DecryptedMessage) => {
 import { EmojiPickerPopover } from '../components/EmojiPickerPopover';
 import { MessageActionsSheet } from '../components/MessageActionsSheet';
 import { MessageMedia, MediaViewer, type UploadState } from '../components/MessageMedia';
-import { AttachSheet, MediaComposer, type PendingMedia } from '../components/MediaComposer';
+import { AttachSheet, MediaComposer, type Calidad, type PendingMedia } from '../components/MediaComposer';
+import { bajarOriginal, borrarOriginal, subirOriginal, type DatosOriginal } from '../lib/originales';
 import {
   MAX_FILE_BYTES,
   MAX_VIDEO_SECONDS,
@@ -359,7 +360,9 @@ export const ChatPage: React.FC = () => {
   const pulsacion = useRef<{ id: number; x: number; y: number; t: number; soltado: boolean; cancelado?: boolean } | null>(null);
   const ignorarClick = useRef(false);
   const fotoVideoInputRef = useRef<HTMLInputElement>(null);
-  const retryRef = useRef<Map<string, { media: PendingMedia; payload: MessagePayload; viewOnce: boolean; replyId: string | null; fileKey?: string }>>(new Map());
+  const retryRef = useRef<
+    Map<string, { media: PendingMedia; payload: MessagePayload; viewOnce: boolean; replyId: string | null; fileKey?: string; original?: DatosOriginal }>
+  >(new Map());
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const videoCameraInputRef = useRef<HTMLInputElement>(null);
@@ -1446,6 +1449,7 @@ export const ChatPage: React.FC = () => {
   const deleteForAll = async (msg: DecryptedMessage) => {
     setConfirmDeleteAll(null);
     forgetUrl(msg.id);
+    if (msg.payload?.media?.original) void borrarOriginal(msg.payload.media.original.ruta);
     if (msg.media_path) {
       olvidarArchivoGuardado(msg.media_path);
       const { error: stErr } = await supabase.storage.from('media').remove([msg.media_path]);
@@ -1529,15 +1533,33 @@ export const ChatPage: React.FC = () => {
     retryRef.current.set(messageId, saved);
     setUploads((u) => ({ ...u, [messageId]: { pct: saved.fileKey ? 100 : 0 } }));
     try {
+      // Calidad Original: primero la foto completa (es lo que más pesa)
+      const conOriginal = !!saved.media.subirOriginal;
+      if (saved.media.subirOriginal && !saved.original) {
+        try {
+          saved.original = await subirOriginal(chatId, saved.media.subirOriginal, (pct) =>
+            setUploads((u) => ({ ...u, [messageId]: { pct: Math.round(pct * 0.85) } }))
+          );
+        } catch (e) {
+          // Si el servicio de originales no está listo, la foto igual se envía en HD
+          console.error('[ChatDos] foto original', e);
+          saved.media = { ...saved.media, subirOriginal: undefined };
+          setToast(e instanceof Error ? `${e.message} Se envió en HD.` : 'No se pudo subir la foto original. Se envió en HD.');
+        }
+      }
       if (!saved.fileKey) {
         const { fileKey } = await uploadEncrypted(path, media.blob, (pct) =>
-          setUploads((u) => ({ ...u, [messageId]: { pct: Math.min(pct, 99) } }))
+          setUploads((u) => ({ ...u, [messageId]: { pct: Math.min(conOriginal ? 85 + Math.round(pct * 0.14) : pct, 99) } }))
         );
         saved.fileKey = fileKey; // si falla al guardar, el reintento no vuelve a subir
       }
       const finalPayload: MessagePayload = {
         ...payload,
-        media: { ...(payload.media as NonNullable<MessagePayload['media']>), key: saved.fileKey as string },
+        media: {
+          ...(payload.media as NonNullable<MessagePayload['media']>),
+          key: saved.fileKey as string,
+          ...(saved.original ? { original: saved.original } : {}),
+        },
       };
       const encrypted = await encryptJSON(chatKey, finalPayload);
       const { error } = await supabase.from('messages').upsert(
@@ -1674,20 +1696,25 @@ export const ChatPage: React.FC = () => {
     for (const subir of subidas) await subir();
   };
 
-  /** Envía lo del editor; en HD las fotos se vuelven a preparar desde el original con más calidad */
-  const enviarDelEditor = async (lista: PendingMedia[], caption: string, viewOnce: boolean, hd: boolean) => {
-    if (!hd) return sendMedias(lista, caption, viewOnce);
+  /**
+   * Envía lo del editor. En HD las fotos se vuelven a preparar desde el original con más calidad.
+   * En Original además se sube la foto completa, tal cual salió del teléfono (se abre con "Ver original").
+   */
+  const enviarDelEditor = async (lista: PendingMedia[], caption: string, viewOnce: boolean, calidad: Calidad) => {
+    if (calidad === 'normal') return sendMedias(lista, caption, viewOnce);
+    const conOriginal = calidad === 'original' && !viewOnce;
     setPreparing(true);
     try {
       const listas = await Promise.all(
         lista.map(async (m) => {
           if (m.kind !== 'image' || m.sticker || !m.original) return m;
+          const extra = conOriginal ? { subirOriginal: m.original } : {};
           try {
             const img = await compressImage(new File([m.original], 'foto.jpg', { type: m.original.type || 'image/jpeg' }), true);
-            if (img.blob.size > MAX_FILE_BYTES) return m; // muy pesada: va en calidad normal
-            return { ...m, blob: img.blob, mime: img.mime, width: img.width, height: img.height, hd: true };
+            if (img.blob.size > MAX_FILE_BYTES) return { ...m, ...extra }; // muy pesada: se ve en calidad normal
+            return { ...m, ...extra, blob: img.blob, mime: img.mime, width: img.width, height: img.height, hd: true };
           } catch {
-            return m;
+            return { ...m, ...extra };
           }
         })
       );
@@ -1824,9 +1851,12 @@ export const ChatPage: React.FC = () => {
     const media = m.payload?.media;
     if (!media) return;
     try {
-      const url = await urlDeMensaje(m);
+      // Si se envió en calidad Original, se descarga la foto completa
+      if (media.original) setToast('Descargando la foto original…');
+      const url = media.original ? await bajarOriginal(media.original) : await urlDeMensaje(m);
+      const mime = media.original?.mime ?? media.mime;
       if (!url) throw new Error('sin archivo');
-      const ok = await descargarArchivo(url, media.mime, nombreDescarga(media.mime, m.payload?.sentAt || m.created_at, media.name));
+      const ok = await descargarArchivo(url, mime, nombreDescarga(mime, m.payload?.sentAt || m.created_at, media.name));
       if (ok) setToast(m.kind === 'video' ? 'Video descargado' : m.kind === 'audio' ? 'Audio descargado' : 'Foto descargada');
     } catch (err) {
       console.error('[ChatDos] descargar', err);
@@ -3614,7 +3644,7 @@ export const ChatPage: React.FC = () => {
           onCambiar={(i, m) => setPendingMedia((l) => (l ? l.map((x, j) => (j === i ? m : x)) : l))}
           userId={user?.id}
           miLlavePublica={myProfile?.public_key}
-          onSend={({ caption, viewOnce, hd }) => void enviarDelEditor(pendingMedia, caption, viewOnce, hd)}
+          onSend={({ caption, viewOnce, calidad }) => void enviarDelEditor(pendingMedia, caption, viewOnce, calidad)}
         />
       )}
 

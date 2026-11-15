@@ -29,6 +29,13 @@ export interface MessagePayload {
     music?: boolean; // true = archivo de audio elegido del celular, false = nota de voz
     sticker?: boolean; // se muestra sin burbuja, como sticker
     hd?: boolean; // foto enviada en alta calidad (lleva la marca "HD")
+    // Foto en calidad ORIGINAL guardada aparte (cifrada) en Cloudflare R2
+    original?: {
+      ruta: string;
+      key: string; // llave AES del archivo original (base64)
+      size: number; // bytes de la foto original
+      mime: string;
+    };
   };
   // Registro de una llamada (se muestra como burbuja especial)
   llamada?: {

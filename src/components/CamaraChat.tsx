@@ -151,9 +151,38 @@ export const CamaraChat: React.FC<{
   };
 
   // ---------- Foto ----------
+  // Foto con TODA la resolución del sensor (Chrome en Android). En otros navegadores se usa la imagen de la pantalla.
+  const fotoCompleta = async (): Promise<Blob | null> => {
+    const pista = streamRef.current?.getVideoTracks()[0];
+    const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => {
+      getPhotoCapabilities: () => Promise<{ imageWidth?: { max: number }; imageHeight?: { max: number } }>;
+      takePhoto: (o?: Record<string, unknown>) => Promise<Blob>;
+    } }).ImageCapture;
+    if (!IC || !pista || frontal) return null;
+    try {
+      const cap = new IC(pista);
+      const c = await cap.getPhotoCapabilities().catch(() => null);
+      const opciones = c?.imageWidth?.max && c.imageHeight?.max ? { imageWidth: c.imageWidth.max, imageHeight: c.imageHeight.max } : {};
+      const b = await Promise.race([cap.takePhoto(opciones), new Promise<null>((r) => setTimeout(() => r(null), 8000))]);
+      return b && b.size > 0 ? b : null;
+    } catch {
+      return null;
+    }
+  };
+
   const tomarFoto = async () => {
     const v = videoRef.current;
     if (!v || !v.videoWidth) return;
+    setDestello(true);
+    setTimeout(() => setDestello(false), 150);
+    const completa = await fotoCompleta();
+    if (completa) {
+      const file = new File([completa], `foto-${Date.now()}.jpg`, { type: completa.type || 'image/jpeg' });
+      recientes.unshift({ file, url: URL.createObjectURL(completa) });
+      while (recientes.length > 24) URL.revokeObjectURL(recientes.pop()!.url);
+      onListo([...Array.from(elegidas), file]);
+      return;
+    }
     const c = document.createElement('canvas');
     c.width = v.videoWidth;
     c.height = v.videoHeight;
@@ -165,8 +194,6 @@ export const CamaraChat: React.FC<{
       ctx.scale(-1, 1);
     }
     ctx.drawImage(v, 0, 0, c.width, c.height);
-    setDestello(true);
-    setTimeout(() => setDestello(false), 150);
     const blob = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/jpeg', 0.92));
     if (!blob) return;
     const file = new File([blob], `foto-${Date.now()}.jpg`, { type: 'image/jpeg' });
