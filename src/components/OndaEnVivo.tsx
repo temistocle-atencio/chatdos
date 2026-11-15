@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { formatDuration } from '../lib/media';
 
 // Barras de sonido mientras se graba una nota de voz (como WhatsApp):
 // cada ~90 ms entra una barra nueva por la derecha con el volumen del micrófono
@@ -9,13 +10,15 @@ type Props = {
   nivel: () => number;
   className?: string;
   style?: React.CSSProperties;
+  /** En pausa: las barras se quedan quietas */
+  detenida?: boolean;
 };
 
 const ANCHO_BARRA = 3;
 const ESPACIO = 2;
 const CADA_MS = 90;
 
-const OndaEnVivo: React.FC<Props> = ({ nivel, className = '', style }) => {
+const OndaEnVivo: React.FC<Props> = ({ nivel, className = '', style, detenida = false }) => {
   const cajaRef = useRef<HTMLDivElement>(null);
   const nivelRef = useRef(nivel);
   nivelRef.current = nivel;
@@ -34,6 +37,7 @@ const OndaEnVivo: React.FC<Props> = ({ nivel, className = '', style }) => {
   }, []);
 
   useEffect(() => {
+    if (detenida) return;
     let anterior = 0;
     const t = setInterval(() => {
       // Un poco de suavizado para que no salte de golpe
@@ -46,7 +50,7 @@ const OndaEnVivo: React.FC<Props> = ({ nivel, className = '', style }) => {
       });
     }, CADA_MS);
     return () => clearInterval(t);
-  }, [cuantas]);
+  }, [cuantas, detenida]);
 
   return (
     <div ref={cajaRef} className={`flex items-center justify-end overflow-hidden h-8 ${className}`} style={style} aria-hidden="true">
@@ -67,3 +71,15 @@ const OndaEnVivo: React.FC<Props> = ({ nivel, className = '', style }) => {
 };
 
 export default OndaEnVivo;
+
+/** Reloj de la grabación (se actualiza solo, sin volver a dibujar el chat) */
+export const TiempoGrabacion: React.FC<{ segundos: () => number }> = ({ segundos }) => {
+  const leer = useRef(segundos);
+  leer.current = segundos;
+  const [s, setS] = useState(() => Math.floor(segundos()));
+  useEffect(() => {
+    const t = setInterval(() => setS(Math.floor(leer.current())), 250);
+    return () => clearInterval(t);
+  }, []);
+  return <>{formatDuration(s)}</>;
+};

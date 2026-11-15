@@ -4,7 +4,7 @@ import { Play, Pause, Music, Mic, Image as ImageIcon, Video, RotateCw, Loader2, 
 import { IconoVerUnaVez } from './Iconos';
 import { AvatarImage } from './AvatarImage';
 import type { DecryptedMessage } from '../types/chat';
-import { downloadDecrypted, getCachedUrl, formatDuration, formatBytes } from '../lib/media';
+import { downloadDecrypted, getCachedUrl, formatDuration, formatBytes, nivelesDeAudio, altoBarra } from '../lib/media';
 
 export interface UploadState {
   pct: number;
@@ -276,34 +276,13 @@ const BARRAS = 32;
 async function calcularOnda(id: string, url: string): Promise<number[] | null> {
   if (ondas.has(id)) return ondas.get(id)!;
   try {
-    const datos = await (await fetch(url)).arrayBuffer();
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new Ctx();
-    const audio = await new Promise<AudioBuffer>((ok, mal) => ctx.decodeAudioData(datos, ok, mal));
-    ctx.close().catch(() => {});
-    const canal = audio.getChannelData(0);
-    const paso = Math.max(1, Math.floor(canal.length / BARRAS));
-    const niveles: number[] = [];
-    for (let b = 0; b < BARRAS; b++) {
-      let suma = 0;
-      let n = 0;
-      for (let i = b * paso; i < Math.min(canal.length, (b + 1) * paso); i += 8) {
-        suma += canal[i] * canal[i];
-        n++;
-      }
-      niveles.push(n ? Math.sqrt(suma / n) : 0);
-    }
-    const tope = Math.max(...niveles, 0.005);
-    const onda = niveles.map((v) => Math.min(1, v / tope));
+    const onda = await nivelesDeAudio(await (await fetch(url)).arrayBuffer(), BARRAS);
     ondas.set(id, onda);
     return onda;
   } catch {
     return null;
   }
 }
-
-// Alto de cada barra en px: el silencio es un punto y la voz normal queda a media altura
-const altoBarra = (v: number) => (v < 0.12 ? 3 : Math.round(4 + Math.pow(v, 1.3) * 16));
 
 // Velocidad de las notas de voz (se recuerda para la siguiente, como en WhatsApp)
 let velocidadNotas = 1;
