@@ -36,10 +36,31 @@ export interface Llamada {
 }
 
 // Servidores para encontrar el camino entre los dos celulares.
-// (Para redes muy cerradas hará falta un servidor de paso TURN; se agrega con Cloudflare.)
 const ICE: RTCIceServer[] = [
   { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
 ];
+
+// Servidor de paso (TURN de Cloudflare) para redes muy cerradas. Las credenciales duran 24 horas
+// y las entrega nuestro servidor; la llave de Cloudflare nunca está en la app.
+let servidores: { lista: RTCIceServer[]; hasta: number } | null = null;
+let pidiendo: Promise<void> | null = null;
+function prepararServidores(): Promise<void> {
+  if (servidores && servidores.hasta > Date.now()) return Promise.resolve();
+  if (!pidiendo) {
+    pidiendo = supabase.functions
+      .invoke('notificar', { body: { accion: 'turn' } })
+      .then(({ data }) => {
+        const lista = (data as { iceServers?: RTCIceServer[] | null } | null)?.iceServers;
+        if (Array.isArray(lista) && lista.length) servidores = { lista: [...ICE, ...lista], hasta: Date.now() + 12 * 3600_000 };
+      })
+      .catch(() => {})
+      .finally(() => {
+        pidiendo = null;
+      });
+  }
+  // Si tarda, la llamada sigue sin esperar más
+  return Promise.race([pidiendo, new Promise<void>((r) => setTimeout(r, 3000))]);
+}
 
 const CALIDADES: Record<Exclude<Calidad, 'auto'>, { alto: number; ancho: number; bits: number }> = {
   '360': { alto: 360, ancho: 640, bits: 500_000 },
@@ -189,7 +210,7 @@ async function pedirMedios(tipo: TipoLlamada, frontal = true) {
 
 // ---------- Conexión ----------
 function crearConexion(chatId: string) {
-  const c = new RTCPeerConnection({ iceServers: ICE });
+  const c = new RTCPeerConnection({ iceServers: servidores?.lista ?? ICE });
   pc = c;
   iceEnEspera = [];
   actual?.local?.getTracks().forEach((t) => c.addTrack(t, actual!.local!));
@@ -348,6 +369,7 @@ export async function iniciarLlamada(chatId: string, tipo: TipoLlamada) {
   if (actual && actual.estado !== 'terminada') throw new Error('Ya estás en una llamada.');
   if (!miId) throw new Error('Debes iniciar sesión.');
   const { otro } = await datosDelChat(chatId);
+  void prepararServidores();
   const local = await pedirMedios(tipo);
   const id = crypto.randomUUID();
   actual = {
@@ -392,7 +414,7 @@ export async function contestar() {
   if (!l || l.estado !== 'sonando') return;
   pararTimbre();
   try {
-    const local = await pedirMedios(l.tipo);
+    const [local] = await Promise.all([pedirMedios(l.tipo), prepararServidores()]);
     cambiar({ local, estado: 'conectando' });
     crearConexion(l.chatId);
     await senal(l.chatId, { t: 'aceptar', id: l.id });
@@ -476,6 +498,7 @@ async function alRecibir(chatId: string, crudo: unknown) {
       void senal(chatId, { t: 'ocupado', id: d.id });
       return;
     }
+    void prepararServidores();
     const { otro } = await datosDelChat(chatId);
     const tipo: TipoLlamada = d.tipo === 'video' ? 'video' : 'voz';
     actual = {
@@ -522,6 +545,7 @@ async function alRecibir(chatId: string, crudo: unknown) {
       if (reintento) clearInterval(reintento);
       if (limite) clearTimeout(limite);
       cambiar({ estado: 'conectando' });
+      await prepararServidores();
       const c = crearConexion(l.chatId);
       const oferta = await c.createOffer();
       await c.setLocalDescription(oferta);

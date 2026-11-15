@@ -2,6 +2,7 @@
 //   { accion: "clave" }                 -> devuelve la llave pública para suscribirse
 //   { accion: "enviar", message_id }    -> avisa a la otra persona que llegó un mensaje
 //   { accion: "llamada", chat_id, tipo } -> avisa a la otra persona que la están llamando
+//   { accion: "turn" }                  -> credenciales del servidor de paso para las llamadas
 // La notificación NUNCA lleva el texto del mensaje (está cifrado de extremo a extremo):
 // solo dice quién escribió y qué tipo de mensaje es.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -51,6 +52,26 @@ Deno.serve(async (req) => {
 
     if (cuerpo.accion === 'clave') {
       return responder({ publicKey: llaves.public_key });
+    }
+
+    // ---------- Servidor de paso para llamadas (TURN de Cloudflare) ----------
+    // Entrega credenciales que duran 24 horas. La llave de Cloudflare vive solo aquí (secretos de Supabase).
+    if (cuerpo.accion === 'turn') {
+      const llaveTurn = Deno.env.get('CF_TURN_KEY_ID');
+      const tokenTurn = Deno.env.get('CF_TURN_TOKEN');
+      if (!llaveTurn || !tokenTurn) return responder({ iceServers: null });
+      const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${llaveTurn}/credentials/generate-ice-servers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenTurn}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ttl: 86400 }),
+      });
+      if (!r.ok) {
+        console.error('turn error', r.status, await r.text());
+        return responder({ iceServers: null });
+      }
+      const j = await r.json();
+      const lista = Array.isArray(j.iceServers) ? j.iceServers : j.iceServers ? [j.iceServers] : null;
+      return responder({ iceServers: lista });
     }
 
     // ---------- Llamada entrante ----------
