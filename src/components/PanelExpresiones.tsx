@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import 'emoji-picker-element';
 import es from 'emoji-picker-element/i18n/es';
-import { Smile, Sticker as IconoSticker } from 'lucide-react';
+import { IconoEmoji, IconoSticker } from './Iconos';
 import { useTheme } from '../context/ThemeContext';
 import { StickerPanel } from './StickerPanel';
 import type { Sticker } from '../lib/stickers';
@@ -55,26 +55,27 @@ export const PanelExpresiones: React.FC<{
   onCerrar: () => void;
   onAviso: (t: string) => void;
 }> = ({ pestana, onPestana, onEmoji, userId, miLlavePublica, onSticker, onCerrar, onAviso }) => {
-  const boton = (p: PestanaExpresiones, Icono: typeof Smile, texto: string) => (
+  const boton = (p: PestanaExpresiones, Icono: React.FC<{ className?: string }>, texto: string) => (
     <button
       type="button"
       onClick={() => onPestana(p)}
-      className={`flex-1 h-9 rounded-full flex items-center justify-center gap-1.5 text-xs font-['Poppins'] font-semibold transition-colors ${
+      className={`flex-1 h-9 flex items-center justify-center transition-colors first:rounded-l-full last:rounded-r-full ${
         pestana === p
-          ? 'bg-[#005198] text-white dark:bg-white dark:text-[#003A73]'
+          ? 'bg-[#E3E7EC] text-[#003A73] dark:bg-white/20 dark:text-white'
           : 'text-[#5B6670] dark:text-[#E3E7EC]'
       }`}
       aria-pressed={pestana === p}
+      aria-label={texto}
+      title={texto}
     >
-      <Icono className="w-4 h-4" strokeWidth={2} />
-      {texto}
+      <Icono className="w-[22px] h-[22px]" />
     </button>
   );
 
   return (
     <div className="mt-2 -mx-2 bg-white dark:bg-[#253240] border-t border-[#E3E7EC] dark:border-[#003A73] flex flex-col" style={{ height: 'min(42dvh, 340px)' }}>
-      <div className="mx-auto mt-2 mb-1 flex gap-1 p-1 w-56 rounded-full border border-[#E3E7EC] dark:border-[#003A73] shrink-0">
-        {boton('emojis', Smile, 'Emojis')}
+      <div className="mx-auto mt-2 mb-1 flex w-40 rounded-full border border-[#C9CFD6] dark:border-[#003A73] divide-x divide-[#C9CFD6] dark:divide-[#003A73] overflow-hidden shrink-0">
+        {boton('emojis', IconoEmoji, 'Emojis')}
         {boton('stickers', IconoSticker, 'Stickers')}
       </div>
       <div className="flex-1 min-h-0">

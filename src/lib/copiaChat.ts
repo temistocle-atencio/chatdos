@@ -133,6 +133,12 @@ export async function descargarCopia(userId: string, alAvanzar: (p: ProgresoCopi
           if (p2.llamada) {
             const d = p2.llamada.duracion;
             cuerpo = `${p2.llamada.tipo === 'video' ? '🎥 Videollamada' : '📞 Llamada'} ${p2.llamada.estado === 'completada' ? `(${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')})` : '(sin respuesta)'}`;
+          } else if (p2.ubicacion) {
+            const u = p2.ubicacion;
+            cuerpo = `📍 <a href="https://www.google.com/maps/search/?api=1&query=${u.lat},${u.lng}">Ubicación</a>`;
+          } else if (p2.contacto) {
+            const c = p2.contacto;
+            cuerpo = `👤 <b>${escapar(c.nombre)}</b><br>${c.telefonos.map(escapar).join('<br>')}${c.correo ? '<br>' + escapar(c.correo) : ''}`;
           } else if (f.view_once) {
             cuerpo = '<i>Foto o video para ver una vez (no se guarda en la copia)</i>';
           } else {

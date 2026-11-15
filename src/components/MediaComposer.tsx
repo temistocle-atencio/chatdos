@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Send, Image as ImageIcon, Camera, Music, Eye, EyeOff, Play } from 'lucide-react';
 import { formatBytes, formatDuration } from '../lib/media';
+import { IconoCamaraColor, IconoContactoColor, IconoGaleriaColor, IconoUbicacionColor } from './Iconos';
 
 // Archivo listo para enviar (ya comprimido o revisado)
 export interface PendingMedia {
@@ -22,8 +23,10 @@ export const AttachSheet: React.FC<{
   onGallery: () => void;
   onCamera: () => void;
   onVideoCamera?: () => void;
+  onUbicacion: () => void;
+  onContacto: () => void;
   onAudioFile: () => void;
-}> = ({ onClose, onGallery, onCamera, onVideoCamera, onAudioFile }) => {
+}> = ({ onClose, onGallery, onCamera, onUbicacion, onContacto, onAudioFile }) => {
   const item = (icon: React.ReactNode, color: string, label: string, onClick: () => void) => (
     <button
       type="button"
@@ -33,7 +36,7 @@ export const AttachSheet: React.FC<{
       }}
       className="flex flex-col items-center gap-1.5 py-1 active:scale-95 transition-transform"
     >
-      <span className="w-[68px] h-[52px] rounded-full dark:brightness-[1.8] border border-[#E3E7EC] dark:border-[#003A73] flex items-center justify-center" style={{ color }} data-icono>
+      <span className="w-[68px] h-[52px] rounded-full border border-[#E3E7EC] dark:border-[#003A73] flex items-center justify-center" style={{ color }} data-icono>
         {icon}
       </span>
       <span className="text-[13px] font-['Inter'] text-[#1F2933] dark:text-white">{label}</span>
@@ -47,9 +50,11 @@ export const AttachSheet: React.FC<{
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-4 w-10 h-1 rounded-full bg-[#C9CFD6] dark:bg-[#5B6670]" aria-hidden="true" />
-        <div className="grid grid-cols-3 gap-y-4">
-          {item(<ImageIcon className="w-6 h-6" strokeWidth={2} />, '#005198', 'Galería', onGallery)}
-          {item(<Camera className="w-6 h-6" strokeWidth={2} />, '#F28C1B', 'Cámara', onCamera)}
+        <div className="grid grid-cols-4 gap-y-4">
+          {item(<IconoGaleriaColor className="w-7 h-7" />, '#0066FF', 'Galería', onGallery)}
+          {item(<IconoCamaraColor className="w-7 h-7" />, '#F52E71', 'Cámara', onCamera)}
+          {item(<IconoUbicacionColor className="w-8 h-8" />, '#1E8E3E', 'Ubicación', onUbicacion)}
+          {item(<IconoContactoColor className="w-7 h-7" />, '#0c52bb', 'Contacto', onContacto)}
           {item(<Music className="w-6 h-6" strokeWidth={2} />, '#D46A00', 'Audio', onAudioFile)}
         </div>
       </div>

@@ -79,6 +79,8 @@ async function vistaPrevia(
       return decryptJSONConRespaldo<MessagePayload>(llaveActual, viejas, msg.ciphertext, msg.iv);
     });
     const kindName = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' }[msg.kind];
+    if (payload.ubicacion) return '📍 Ubicación';
+    if (payload.contacto) return `👤 ${payload.contacto.nombre}`;
     if (payload.llamada) {
       const perdida = payload.llamada.estado !== 'completada';
       return `${payload.llamada.tipo === 'video' ? '🎥 Videollamada' : '📞 Llamada'}${perdida ? ' perdida' : ''}`;

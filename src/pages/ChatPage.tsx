@@ -4,7 +4,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeft,
   Send,
-  Smile,
   RefreshCw,
   ShieldCheck,
   ShieldAlert,
@@ -18,14 +17,12 @@ import {
   MessageSquare,
   Reply,
   Pencil,
-  Paperclip,
   Mic,
   Trash2,
   Eye,
   EyeOff,
   Bell,
   BellOff,
-  Camera,
   Keyboard,
   Lock,
   ChevronUp,
@@ -53,6 +50,8 @@ import {
 } from '../lib/offline';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { CamaraChat, duracionGrabada } from '../components/CamaraChat';
+import { EnviarContacto, EnviarUbicacion } from '../components/UbicacionYContacto';
+import { IconoCamara, IconoClip, IconoStickerCara } from '../components/Iconos';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { FondoChat } from '../components/FondoChat';
@@ -122,6 +121,8 @@ const shortText = (m: DecryptedMessage): string => {
   if (m.deleted_for_all) return 'Mensaje eliminado';
   const t = (m.payload?.text || '').replace(/\s+/g, ' ').trim();
   if (t) return t.length > 120 ? t.slice(0, 120) + '…' : t;
+  if (m.payload?.ubicacion) return '📍 Ubicación';
+  if (m.payload?.contacto) return `👤 ${m.payload.contacto.nombre}`;
   if (m.kind === 'image') return m.payload?.media?.sticker ? 'Sticker' : 'Foto';
   if (m.kind === 'video') return 'Video';
   if (m.kind === 'audio') return 'Audio';
@@ -234,7 +235,15 @@ export const ChatPage: React.FC = () => {
   // Entrada de texto y emojis
   const [inputText, setInputText] = useState('');
   const [panel, setPanel] = useState<PestanaExpresiones | null>(null); // emojis / stickers (en lugar del teclado)
-  const ultimaPestana = useRef<PestanaExpresiones>('emojis');
+  const ultimaPestana = useRef<PestanaExpresiones>(
+    (() => {
+      try {
+        return localStorage.getItem('chatdos:pestanaExpresiones') === 'emojis' ? 'emojis' : 'stickers';
+      } catch {
+        return 'stickers';
+      }
+    })()
+  );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -290,6 +299,7 @@ export const ChatPage: React.FC = () => {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const videoCameraInputRef = useRef<HTMLInputElement>(null);
   const [camara, setCamara] = useState<null | 'foto' | 'video'>(null);
+  const [enviarExtra, setEnviarExtra] = useState<null | 'ubicacion' | 'contacto'>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<DecryptedMessage[]>([]);
 
@@ -1097,11 +1107,11 @@ export const ChatPage: React.FC = () => {
   };
 
   // 6. Enviar mensaje cifrado (o guardar la edición)
-  const handleSendMessage = async () => {
-    const textToSend = inputText.trim();
-    if (!textToSend || !user || !chatId || !chatKey) return;
+  const handleSendMessage = async (especial?: Pick<MessagePayload, 'ubicacion' | 'contacto'>) => {
+    const textToSend = especial ? '' : inputText.trim();
+    if ((!textToSend && !especial) || !user || !chatId || !chatKey) return;
 
-    if (editingMsg) {
+    if (editingMsg && !especial) {
       await saveEdit(editingMsg, textToSend);
       return;
     }
@@ -1113,7 +1123,13 @@ export const ChatPage: React.FC = () => {
       ? { senderId: replying.sender_id, text: shortText(replying), kind: replying.kind }
       : undefined;
 
-    const payload: MessagePayload = { v: 1, text: textToSend, sentAt, ...(replyPreview ? { replyPreview } : {}) };
+    const payload: MessagePayload = {
+      v: 1,
+      ...(textToSend ? { text: textToSend } : {}),
+      ...(especial ?? {}),
+      sentAt,
+      ...(replyPreview ? { replyPreview } : {}),
+    };
 
     // Mensaje optimista
     const optimisticMessage: DecryptedMessage = {
@@ -1137,11 +1153,11 @@ export const ChatPage: React.FC = () => {
     };
 
     setMessages((prev) => [...prev, optimisticMessage]);
-    setInputText('');
     setReplyTo(null);
-    setPanel(null);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+    if (!especial) {
+      setInputText('');
+      setPanel(null);
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
     }
     scrollToBottom();
 
@@ -2467,10 +2483,10 @@ export const ChatPage: React.FC = () => {
                   }}
                   disabled={!hasPartnerKey}
                   className="w-10 h-11 shrink-0 flex items-center justify-center text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white transition-colors disabled:opacity-40"
-                  title={panel ? 'Teclado' : 'Emojis y stickers'}
-                  aria-label={panel ? 'Mostrar teclado' : 'Emojis y stickers'}
+                  title={panel ? 'Teclado' : 'Stickers y emojis'}
+                  aria-label={panel ? 'Mostrar teclado' : 'Stickers y emojis'}
                 >
-                  {panel ? <Keyboard className="w-[22px] h-[22px]" strokeWidth={2} /> : <Smile className="w-[22px] h-[22px]" strokeWidth={2} />}
+                  {panel ? <Keyboard className="w-[22px] h-[22px]" strokeWidth={2} /> : <IconoStickerCara className="w-[23px] h-[23px]" />}
                 </button>
 
                 {/* Campo de texto que crece hasta 5 líneas */}
@@ -2500,7 +2516,7 @@ export const ChatPage: React.FC = () => {
                     title="Adjuntar"
                     aria-label="Adjuntar foto, video o audio"
                   >
-                    {preparing ? <RefreshCw className="w-5 h-5 animate-spin" strokeWidth={2} /> : <Paperclip className="w-[21px] h-[21px] -rotate-45" strokeWidth={2} />}
+                    {preparing ? <RefreshCw className="w-5 h-5 animate-spin" strokeWidth={2} /> : <IconoClip className="w-[23px] h-[23px] rotate-45" />}
                   </button>
                 )}
 
@@ -2514,7 +2530,7 @@ export const ChatPage: React.FC = () => {
                     title="Cámara"
                     aria-label="Abrir la cámara"
                   >
-                    <Camera className="w-[22px] h-[22px]" strokeWidth={2} />
+                    <IconoCamara className="w-[22px] h-[22px]" />
                   </button>
                 )}
               </>
@@ -2587,6 +2603,11 @@ export const ChatPage: React.FC = () => {
             pestana={panel}
             onPestana={(p) => {
               ultimaPestana.current = p;
+              try {
+                localStorage.setItem('chatdos:pestanaExpresiones', p);
+              } catch {
+                /* sin almacenamiento: no pasa nada */
+              }
               setPanel(p);
             }}
             onEmoji={(emoji) =>
@@ -2673,6 +2694,14 @@ export const ChatPage: React.FC = () => {
           onVideoCamera={() => {
             setAttachOpen(false);
             setCamara('video');
+          }}
+          onUbicacion={() => {
+            setAttachOpen(false);
+            setEnviarExtra('ubicacion');
+          }}
+          onContacto={() => {
+            setAttachOpen(false);
+            setEnviarExtra('contacto');
           }}
           onAudioFile={() => {
             avisarSelectorArchivo();
@@ -2801,6 +2830,25 @@ export const ChatPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {enviarExtra === 'ubicacion' && (
+        <EnviarUbicacion
+          onCerrar={() => setEnviarExtra(null)}
+          onEnviar={(ubicacion) => {
+            setEnviarExtra(null);
+            void handleSendMessage({ ubicacion });
+          }}
+        />
+      )}
+      {enviarExtra === 'contacto' && (
+        <EnviarContacto
+          onCerrar={() => setEnviarExtra(null)}
+          onEnviar={(contacto) => {
+            setEnviarExtra(null);
+            void handleSendMessage({ contacto });
+          }}
+        />
       )}
 
       {camara && (

@@ -35,6 +35,18 @@ export interface MessagePayload {
     estado: 'completada' | 'perdida' | 'rechazada' | 'cancelada';
     duracion: number; // segundos
   };
+  // Ubicación enviada (se muestra con un mapa pequeño)
+  ubicacion?: {
+    lat: number;
+    lng: number;
+    precision?: number; // metros
+  };
+  // Contacto enviado (tarjeta con nombre y números)
+  contacto?: {
+    nombre: string;
+    telefonos: string[];
+    correo?: string;
+  };
 }
 
 export interface DbMessage {

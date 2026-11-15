@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { Clock, Lock, Ban, ChevronDown, Check, CheckCheck, Reply, Pin, Timer, Phone, Video, PhoneMissed } from 'lucide-react';
+import { BurbujaContacto, BurbujaUbicacion } from './UbicacionYContacto';
 import { resaltarTexto } from './BuscarEnChat';
 import type { DecryptedMessage, Reaction } from '../types/chat';
 import { formatMessageTime, parseTextWithLinks } from '../lib/formatters';
@@ -278,6 +279,10 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         </div>
       );
     }
+
+    // Ubicación y contacto
+    if (message.payload?.ubicacion) return <BurbujaUbicacion u={message.payload.ubicacion} isMine={isMine} metadata={metadata} />;
+    if (message.payload?.contacto) return <BurbujaContacto c={message.payload.contacto} isMine={isMine} metadata={metadata} />;
 
     // Sticker: la imagen sola y la hora en una etiquetita
     if (media && esSticker) {

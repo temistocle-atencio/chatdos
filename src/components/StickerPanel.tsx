@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Image as IconoFotos, FolderOpen, ClipboardPaste, Sticker as IconoSticker, Trash2, Loader2 } from 'lucide-react';
+import { X, FolderOpen, ClipboardPaste, Sticker as IconoSticker, Trash2, Loader2 } from 'lucide-react';
 import {
   agregarSticker,
   alCambiarColeccion,
@@ -146,6 +146,21 @@ export const StickerPanel: React.FC<{
   const boton =
     "h-9 px-3 rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] text-[#005198] dark:text-white text-xs font-['Poppins'] font-semibold flex items-center gap-1.5 shrink-0 disabled:opacity-50";
 
+  const crear = (
+    <button
+      type="button"
+      disabled={!!agregando}
+      onClick={() => {
+        avisarSelectorArchivo();
+        archivoRef.current?.click();
+      }}
+      className="aspect-square rounded-[8px] bg-[#F2F4F7] dark:bg-[#1F2933] flex flex-col items-center justify-center gap-1 text-[#1F2933] dark:text-white disabled:opacity-50"
+    >
+      <span className="w-7 h-7 rounded-full bg-[#1E9E5A] text-white flex items-center justify-center text-lg leading-none">+</span>
+      <span className="text-[11px] font-['Inter'] leading-tight text-center">Crear sticker</span>
+    </button>
+  );
+
   const cuerpo = (
       <div
         className={
@@ -172,21 +187,10 @@ export const StickerPanel: React.FC<{
             disabled={!!agregando}
             onClick={() => {
               avisarSelectorArchivo();
-              archivoRef.current?.click();
-            }}
-          >
-            <IconoFotos className="w-4 h-4" strokeWidth={2} /> Fotos
-          </button>
-          <button
-            type="button"
-            className={boton}
-            disabled={!!agregando}
-            onClick={() => {
-              avisarSelectorArchivo();
               carpetaRef.current?.click();
             }}
           >
-            <FolderOpen className="w-4 h-4" strokeWidth={2} /> Archivos
+            <FolderOpen className="w-4 h-4" strokeWidth={2} /> {esIOS ? 'Archivos' : 'De WhatsApp'}
           </button>
           {'clipboard' in navigator && 'read' in navigator.clipboard && (
             <button type="button" className={boton} disabled={!!agregando} onClick={pegar}>
@@ -223,7 +227,8 @@ export const StickerPanel: React.FC<{
               ))}
             </div>
           ) : lista.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center px-4 gap-2 text-[#5B6670] dark:text-[#E3E7EC]">
+            <div className="min-h-full flex flex-col items-center justify-center text-center px-4 gap-2 text-[#5B6670] dark:text-[#E3E7EC]">
+              <div className="w-24">{crear}</div>
               <IconoSticker className="w-10 h-10 text-[#005198] dark:text-white" strokeWidth={1.5} />
               <p className="text-sm font-['Inter'] font-medium text-[#1F2933] dark:text-white">Todavía no tienes stickers</p>
               {esIOS ? (
@@ -233,7 +238,7 @@ export const StickerPanel: React.FC<{
                 </p>
               ) : (
                 <p className="text-xs font-['Inter'] leading-relaxed text-left">
-                  Toca <b>Archivos</b>, abre el menú <b>☰</b> y elige el <b>almacenamiento interno</b> (el nombre de tu celular). Luego
+                  Toca <b>De WhatsApp</b>, abre el menú <b>☰</b> y elige el <b>almacenamiento interno</b> (el nombre de tu celular). Luego
                   entra a <b>Android → media → com.whatsapp → WhatsApp → Media → WhatsApp Stickers</b> y elige los que quieras (puedes
                   marcar varios dejando presionado). Si no ves el almacenamiento interno, toca <b>⋮</b> y luego{' '}
                   <b>«Mostrar almacenamiento interno»</b>.
@@ -242,6 +247,7 @@ export const StickerPanel: React.FC<{
             </div>
           ) : (
             <div className="grid grid-cols-4 gap-2">
+              {!editando && crear}
               {lista.map((s) => (
                 <Celda key={s.id} s={s} editando={editando} onTocar={() => onEnviar(s)} onBorrar={() => borrar(s)} />
               ))}
