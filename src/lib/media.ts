@@ -507,3 +507,62 @@ export async function olvidarArchivoGuardado(path: string): Promise<void> {
     /* nada */
   }
 }
+
+
+// ---------- Descargar fotos, videos y audios ----------
+
+const EXTENSIONES: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/heic': 'heic',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+  'audio/mp4': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/webm': 'webm',
+  'audio/ogg': 'ogg',
+};
+
+/** Nombre del archivo al descargar: ChatDos-AAAAMMDD-HHMMSS.jpg */
+export function nombreDescarga(mime: string, fecha: number | string | Date, nombre?: string): string {
+  if (nombre) return nombre;
+  const d = new Date(fecha);
+  const dos = (n: number) => String(n).padStart(2, '0');
+  const sello = `${d.getFullYear()}${dos(d.getMonth() + 1)}${dos(d.getDate())}-${dos(d.getHours())}${dos(d.getMinutes())}${dos(d.getSeconds())}`;
+  const ext = EXTENSIONES[mime.split(';')[0]] ?? mime.split('/')[1]?.split(';')[0] ?? 'bin';
+  return `ChatDos-${sello}.${ext}`;
+}
+
+/**
+ * Guarda un archivo (ya descifrado) en el celular o el computador.
+ * En iPhone abre "Compartir" para poder elegir "Guardar imagen" (así queda en Fotos);
+ * en Android y computador se descarga directo (queda en Descargas y en la galería).
+ * Devuelve false si la persona canceló.
+ */
+export async function descargarArchivo(url: string, mime: string, nombre: string): Promise<boolean> {
+  const blob = await (await fetch(url)).blob();
+  const archivo = new File([blob], nombre, { type: mime.split(';')[0] || blob.type });
+  const esIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (esIOS && navigator.canShare?.({ files: [archivo] })) {
+    try {
+      await navigator.share({ files: [archivo] });
+      return true;
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return false;
+      // si falla el menú de compartir, se intenta la descarga normal
+    }
+  }
+  const enlace = document.createElement('a');
+  const u = URL.createObjectURL(archivo);
+  enlace.href = u;
+  enlace.download = nombre;
+  document.body.appendChild(enlace);
+  enlace.click();
+  enlace.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 10_000);
+  return true;
+}

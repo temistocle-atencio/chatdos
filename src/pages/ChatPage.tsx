@@ -57,6 +57,10 @@ import { cargarUbicacionesVivo, compartir, dejarDeCompartir, retomarEnChat, useC
 import { IconoCamara, IconoClip, IconoStickerCara, IconoVerUnaVez, IconoVerUnaVezActivo } from '../components/Iconos';
 import OndaEnVivo, { TiempoGrabacion } from '../components/OndaEnVivo';
 import VistaPreviaGrabacion from '../components/VistaPreviaGrabacion';
+import { AlbumMosaico, AlbumCompleto } from '../components/Album';
+import { Galeria } from '../components/Galeria';
+import { ReenviarA } from '../components/ReenviarA';
+import { dejarReenvio, tomarReenvio, type ItemReenvio } from '../lib/reenvio';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { FondoChat } from '../components/FondoChat';
@@ -98,6 +102,8 @@ import {
   getCachedUrl,
   formatDuration,
   olvidarArchivoGuardado,
+  descargarArchivo,
+  nombreDescarga,
 } from '../lib/media';
 import {
   getLocalPrivateKey,
@@ -311,6 +317,8 @@ export const ChatPage: React.FC = () => {
     viewOnceMsg?: DecryptedMessage;
     loading?: boolean;
   } | null>(null);
+  // Carrusel de fotos y videos del chat (se fija la lista al abrirlo)
+  const [galeria, setGaleria] = useState<{ items: DecryptedMessage[]; inicio: number } | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordViewOnce, setRecordViewOnce] = useState(false);
   const [pausado, setPausado] = useState(false); // grabación con candado en pausa
@@ -335,6 +343,7 @@ export const ChatPage: React.FC = () => {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const videoCameraInputRef = useRef<HTMLInputElement>(null);
   const [camara, setCamara] = useState<null | 'foto' | 'video'>(null);
+  const [albumAbierto, setAlbumAbierto] = useState<string | null>(null); // id del primer mensaje del álbum
   const [enviarExtra, setEnviarExtra] = useState<null | 'ubicacion' | 'contacto'>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<DecryptedMessage[]>([]);
@@ -1169,8 +1178,10 @@ export const ChatPage: React.FC = () => {
   }, [enlaceEscrito]);
 
   // 6. Enviar mensaje cifrado (o guardar la edición)
-  const handleSendMessage = async (especial?: Pick<MessagePayload, 'ubicacion' | 'contacto'>) => {
-    const textToSend = especial ? '' : inputText.trim();
+  const handleSendMessage = async (
+    especial?: Pick<MessagePayload, 'ubicacion' | 'contacto' | 'text' | 'enlace' | 'reenviado'>
+  ) => {
+    const textToSend = especial ? especial.text ?? '' : inputText.trim();
     if ((!textToSend && !especial) || !user || !chatId || !chatKey) return;
 
     if (editingMsg && !especial) {
@@ -1180,7 +1191,7 @@ export const ChatPage: React.FC = () => {
 
     const messageId = crypto.randomUUID();
     const sentAt = Date.now();
-    const replying = replyTo;
+    const replying = especial?.reenviado ? null : replyTo; // lo reenviado no va como respuesta
     const replyPreview: ReplyPreview | undefined = replying
       ? { senderId: replying.sender_id, text: shortText(replying), kind: replying.kind }
       : undefined;
@@ -1545,7 +1556,13 @@ export const ChatPage: React.FC = () => {
     media: PendingMedia,
     caption: string,
     viewOnce: boolean,
-    opts: { sinRespuesta?: boolean; orden?: number; diferir?: boolean } = {}
+    opts: {
+      sinRespuesta?: boolean;
+      orden?: number;
+      diferir?: boolean;
+      album?: MessagePayload['album'];
+      reenviado?: boolean;
+    } = {}
   ): (() => Promise<void>) | null => {
     if (!user || !chatId || !chatKey) return null;
     const messageId = crypto.randomUUID();
@@ -1558,6 +1575,8 @@ export const ChatPage: React.FC = () => {
       ...(replying
         ? { replyPreview: { senderId: replying.sender_id, text: shortText(replying), kind: replying.kind } }
         : {}),
+      ...(opts.album ? { album: opts.album } : {}),
+      ...(opts.reenviado ? { reenviado: true } : {}),
       media: {
         key: '',
         mime: media.mime,
@@ -1612,10 +1631,21 @@ export const ChatPage: React.FC = () => {
     return null;
   };
 
-  // Varias fotos/videos a la vez: aparecen todas al instante y se suben una tras otra (en orden)
-  const sendMedias = async (lista: PendingMedia[], caption: string, viewOnce: boolean) => {
+  // Varias fotos/videos a la vez: aparecen todas al instante y se suben una tras otra (en orden).
+  // Si son 2 o más fotos o videos, van marcados como álbum y se ven juntos (como WhatsApp).
+  const sendMedias = async (lista: PendingMedia[], caption: string, viewOnce: boolean, extra: { reenviado?: boolean } = {}) => {
+    const esAlbum = lista.length >= 2 && !viewOnce && lista.every((m) => (m.kind === 'image' || m.kind === 'video') && !m.sticker);
+    const albumId = esAlbum ? crypto.randomUUID() : '';
     const subidas = lista
-      .map((m, i) => sendMedia(m, i === 0 ? caption : '', viewOnce, { sinRespuesta: i > 0, orden: i, diferir: true }))
+      .map((m, i) =>
+        sendMedia(m, i === 0 ? caption : '', viewOnce, {
+          sinRespuesta: i > 0,
+          orden: i,
+          diferir: true,
+          album: esAlbum ? { id: albumId, n: lista.length, i } : undefined,
+          reenviado: extra.reenviado,
+        })
+      )
       .filter((x): x is () => Promise<void> => !!x);
     setPendingMedia(null);
     for (const subir of subidas) await subir();
@@ -1705,6 +1735,161 @@ export const ChatPage: React.FC = () => {
   useAtras(!!editorSticker, () => setEditorSticker(null));
   useAtras(!!pegada, () => setPegada(null));
   useAtras(!!confirmDeleteAll, () => setConfirmDeleteAll(null));
+
+  // ----- Ver fotos y videos en carrusel, y descargarlos -----
+  /** Fotos y videos del chat que se pueden pasar en el carrusel (no "ver una vez" ni stickers) */
+  const mediosDelChat = () =>
+    visibles.filter(
+      (m) =>
+        (m.kind === 'image' || m.kind === 'video') &&
+        !m.view_once &&
+        !m.deleted_for_all &&
+        !m.decryptionError &&
+        !!m.payload?.media &&
+        !m.payload.media.sticker
+    );
+
+  const abrirGaleria = (m: DecryptedMessage, url: string, kind: 'image' | 'video') => {
+    const items = mediosDelChat();
+    const inicio = items.findIndex((x) => x.id === m.id);
+    if (inicio < 0) {
+      setViewer({ url, kind });
+      return;
+    }
+    setGaleria({ items, inicio });
+  };
+
+  /** El archivo descifrado de un mensaje (lo baja si todavía no está) */
+  const urlDeMensaje = useCallback(async (m: DecryptedMessage) => {
+    const media = m.payload?.media;
+    const guardada = getCachedUrl(m.id);
+    if (guardada) return guardada;
+    if (!media?.key || !m.media_path) return undefined;
+    return downloadDecrypted(m.id, m.media_path, media.key, media.mime);
+  }, []);
+
+  /** ¿Este mensaje tiene un archivo que se pueda descargar? */
+  const sePuedeDescargar = (m: DecryptedMessage) =>
+    m.kind !== 'text' && !m.view_once && !m.deleted_for_all && !m.decryptionError && !!m.payload?.media;
+
+  const descargarMensaje = async (m: DecryptedMessage) => {
+    setActionMsg(null);
+    const media = m.payload?.media;
+    if (!media) return;
+    try {
+      const url = await urlDeMensaje(m);
+      if (!url) throw new Error('sin archivo');
+      const ok = await descargarArchivo(url, media.mime, nombreDescarga(media.mime, m.payload?.sentAt || m.created_at, media.name));
+      if (ok) setToast(m.kind === 'video' ? 'Video descargado' : m.kind === 'audio' ? 'Audio descargado' : 'Foto descargada');
+    } catch (err) {
+      console.error('[ChatDos] descargar', err);
+      setToast('No se pudo descargar. Revisa tu conexión e inténtalo de nuevo.');
+    }
+  };
+
+  // ----- Reenviar -----
+  const [reenviar, setReenviar] = useState<DecryptedMessage[] | null>(null);
+  const [preparandoReenvio, setPreparandoReenvio] = useState(false);
+
+  /** ¿Este mensaje se puede reenviar? (no: borrados, "ver una vez", llamadas, ni lo que aún se envía) */
+  const sePuedeReenviar = (m: DecryptedMessage) => {
+    const p = m.payload;
+    if (!p || m.deleted_for_all || m.decryptionError || m.view_once || m.isPending || p.llamada) return false;
+    return !!(p.media || p.text || p.contacto || p.ubicacion);
+  };
+
+  /** Abre "Reenviar a…" (si es un álbum, se reenvía completo) */
+  const abrirReenviar = (m: DecryptedMessage) => {
+    setActionMsg(null);
+    setReenviar(albumes.get(m.id) ?? [m]);
+  };
+
+  /** Arma lo que se va a reenviar: el texto, o el archivo ya descifrado */
+  const prepararReenvio = async (lista: DecryptedMessage[]): Promise<ItemReenvio[]> => {
+    const items: ItemReenvio[] = [];
+    for (const m of lista) {
+      const p = m.payload;
+      if (!p || m.deleted_for_all || m.decryptionError || m.view_once) continue;
+      if (p.media) {
+        if (!m.media_path && !getCachedUrl(m.id)) continue;
+        const url = getCachedUrl(m.id) ?? (await downloadDecrypted(m.id, m.media_path!, p.media.key, p.media.mime));
+        const blob = await (await fetch(url)).blob();
+        items.push({
+          media: {
+            kind: m.kind as 'image' | 'video' | 'audio',
+            blob,
+            mime: p.media.mime,
+            width: p.media.width,
+            height: p.media.height,
+            duration: p.media.duration,
+            thumb: p.media.thumb,
+            name: p.media.name,
+            music: p.media.music,
+            sticker: p.media.sticker,
+          },
+          comentario: p.text,
+        });
+      } else if (p.text || p.contacto || p.ubicacion) {
+        items.push({
+          especial: {
+            ...(p.text ? { text: p.text } : {}),
+            ...(p.enlace ? { enlace: p.enlace } : {}),
+            ...(p.contacto ? { contacto: p.contacto } : {}),
+            // La ubicación en tiempo real se reenvía como un punto fijo
+            ...(p.ubicacion ? { ubicacion: { lat: p.ubicacion.lat, lng: p.ubicacion.lng, precision: p.ubicacion.precision } } : {}),
+          },
+        });
+      }
+    }
+    return items;
+  };
+
+  /** Envía en ESTE chat lo que llegó para reenviar */
+  const enviarReenvio = async (items: ItemReenvio[]) => {
+    const medias = items.filter((i) => i.media);
+    for (const i of items) if (i.especial) await handleSendMessage({ ...i.especial, reenviado: true });
+    if (medias.length === 1) {
+      sendMedia(medias[0].media!, medias[0].comentario ?? '', false, { sinRespuesta: true, reenviado: true });
+    } else if (medias.length > 1) {
+      await sendMedias(medias.map((i) => i.media!), medias[0].comentario ?? '', false, { reenviado: true });
+    }
+  };
+
+  const reenviarA = async (destino: string) => {
+    const lista = reenviar;
+    setReenviar(null);
+    if (!lista) return;
+    setPreparandoReenvio(true);
+    try {
+      const items = await prepararReenvio(lista);
+      if (!items.length) {
+        setToast('Ese mensaje no se puede reenviar');
+        return;
+      }
+      if (destino === chatId) {
+        await enviarReenvio(items);
+      } else {
+        dejarReenvio(destino, items);
+        navigate(`/chat/${destino}`);
+      }
+    } catch (err) {
+      console.error('[ChatDos] reenviar', err);
+      setToast('No se pudo reenviar. Revisa tu conexión e inténtalo de nuevo.');
+    } finally {
+      setPreparandoReenvio(false);
+    }
+  };
+
+  // Al abrir este chat desde "Reenviar a…": se envía lo que llegó, con la llave de este chat
+  const reenvioHecho = useRef(false);
+  useEffect(() => {
+    if (!chatKey || !user || !chatId || reenvioHecho.current) return;
+    const items = tomarReenvio(chatId);
+    if (!items) return;
+    reenvioHecho.current = true;
+    void enviarReenvio(items);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatKey, user, chatId]);
 
   // ----- Notas de voz -----
   const startRecording = async (): Promise<boolean> => {
@@ -2100,6 +2285,32 @@ export const ChatPage: React.FC = () => {
   // Los mensajes temporales vencidos no se muestran (el servidor los borra al abrir)
   const visibles = messages.filter((m) => !estaVencido(m));
 
+  // Álbumes: fotos y videos enviados juntos y seguidos se dibujan en una sola burbuja.
+  // El primero lleva el álbum completo y los demás no se dibujan aparte.
+  const albumes = new Map<string, DecryptedMessage[]>();
+  const enAlbum = new Set<string>();
+  {
+    let grupo: DecryptedMessage[] | null = null;
+    const cerrar = () => {
+      if (grupo && grupo.length > 1) {
+        albumes.set(grupo[0].id, grupo);
+        grupo.slice(1).forEach((x) => enAlbum.add(x.id));
+      }
+    };
+    for (const m of visibles) {
+      const a = m.payload?.album;
+      const sirve =
+        !!a && !m.deleted_for_all && !m.decryptionError && !m.view_once && (m.kind === 'image' || m.kind === 'video');
+      if (sirve && grupo && grupo[0].payload?.album?.id === a!.id && grupo[0].sender_id === m.sender_id) {
+        grupo.push(m);
+        continue;
+      }
+      cerrar();
+      grupo = sirve ? [m] : null;
+    }
+    cerrar();
+  }
+
   return (
     <div
       className="flex-1 flex flex-col h-full min-h-0 w-full relative overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933]"
@@ -2466,7 +2677,20 @@ export const ChatPage: React.FC = () => {
             </div>
           ) : (
             visibles.map((msg, index) => {
+              if (enAlbum.has(msg.id)) return null; // va dentro del álbum de arriba
               const isMine = msg.sender_id === user?.id;
+              const album = albumes.get(msg.id);
+              const casilla = (m: DecryptedMessage) => (
+                <MessageMedia
+                  message={m}
+                  isMine={isMine}
+                  upload={uploads[m.id]}
+                  onRetry={retryUpload}
+                  onOpenMedia={(url, kind) => abrirGaleria(m, url, kind)}
+                  onOpenViewOnce={openViewOnce}
+                  mosaico
+                />
+              );
 
               const currentMsgDate = formatMessageDateSeparator(
                 msg.payload?.sentAt || msg.created_at
@@ -2511,13 +2735,15 @@ export const ChatPage: React.FC = () => {
                     onOpenActions={setActionMsg}
                     onSwipeReply={startReply}
                     media={
-                      msg.kind !== 'text' && !msg.deleted_for_all && !msg.decryptionError ? (
+                      album ? (
+                        <AlbumMosaico mensajes={album} casilla={casilla} onVerTodo={() => setAlbumAbierto(msg.id)} />
+                      ) : msg.kind !== 'text' && !msg.deleted_for_all && !msg.decryptionError ? (
                         <MessageMedia
                           message={msg}
                           isMine={isMine}
                           upload={uploads[msg.id]}
                           onRetry={retryUpload}
-                          onOpenMedia={(url, kind) => setViewer({ url, kind })}
+                          onOpenMedia={(url, kind) => abrirGaleria(msg, url, kind)}
                           onOpenViewOnce={openViewOnce}
                           autorAvatar={isMine ? myProfile?.avatar_path : partner?.avatar_path}
                           autorNombre={isMine ? myProfile?.display_name || myProfile?.username : partnerName}
@@ -2531,6 +2757,12 @@ export const ChatPage: React.FC = () => {
                     onDobleToque={corazonDobleToque}
                     onLlamar={(t) => void llamar(t)}
                     onDejarUbicacion={(id) => void dejarDeCompartir(id, avisarUbicacion)}
+                    onReenviar={
+                      (album || ((msg.kind === 'image' || msg.kind === 'video') && !msg.payload?.media?.sticker)) &&
+                      sePuedeReenviar(msg)
+                        ? () => abrirReenviar(msg)
+                        : undefined
+                    }
                   />
                 </React.Fragment>
               );
@@ -3179,6 +3411,8 @@ export const ChatPage: React.FC = () => {
           }}
           fijado={ajustes.fijado === actionMsg.id}
           onFijar={() => void alternarFijado(actionMsg)}
+          onReenviar={sePuedeReenviar(actionMsg) ? () => abrirReenviar(actionMsg) : undefined}
+          onDescargar={sePuedeDescargar(actionMsg) ? () => void descargarMensaje(actionMsg) : undefined}
           onInfo={() => {
             setInfoMsg(actionMsg);
             setActionMsg(null);
@@ -3186,6 +3420,53 @@ export const ChatPage: React.FC = () => {
         />
       )}
 
+      {galeria && (
+        <Galeria
+          items={galeria.items}
+          inicio={galeria.inicio}
+          autor={(m) => (m.sender_id === user?.id ? 'Tú' : partnerName)}
+          obtenerUrl={urlDeMensaje}
+          onDescargar={(m) => void descargarMensaje(m)}
+          onReenviar={(m) => {
+            setGaleria(null);
+            abrirReenviar(m);
+          }}
+          onCerrar={() => setGaleria(null)}
+        />
+      )}
+      {reenviar && user && (
+        <ReenviarA
+          userId={user.id}
+          chatActual={chatId || ''}
+          cuantos={reenviar.length}
+          onElegir={(destino) => void reenviarA(destino)}
+          onCerrar={() => setReenviar(null)}
+        />
+      )}
+      {preparandoReenvio && (
+        <div className="fixed inset-x-0 top-20 z-[56] flex justify-center pointer-events-none">
+          <span className="px-4 py-2 rounded-full bg-[#1F2933]/90 text-white text-sm font-['Inter'] shadow">Preparando para reenviar…</span>
+        </div>
+      )}
+      {albumAbierto && albumes.get(albumAbierto) && (
+        <AlbumCompleto
+          mensajes={albumes.get(albumAbierto)!}
+          titulo={albumes.get(albumAbierto)![0].sender_id === user?.id ? 'Tú' : partnerName}
+          casilla={(m) => (
+            <MessageMedia
+              message={m}
+              isMine={m.sender_id === user?.id}
+              upload={uploads[m.id]}
+              onRetry={retryUpload}
+              onOpenMedia={(url, kind) => abrirGaleria(m, url, kind)}
+              onOpenViewOnce={openViewOnce}
+              mosaico
+            />
+          )}
+          onOpciones={setActionMsg}
+          onCerrar={() => setAlbumAbierto(null)}
+        />
+      )}
       {infoMsg && <InfoMensaje mensaje={infoMsg} nombre={partnerName} onCerrar={() => setInfoMsg(null)} />}
       {temporalesOpen && (
         <TemporalesModal actual={ajustes.temporales} onElegir={elegirTemporales} onCerrar={() => setTemporalesOpen(false)} />

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Reply, Copy, Pencil, Trash2, EyeOff, Plus, X, Sticker, Pin, PinOff, Info } from 'lucide-react';
+import { Reply, Copy, Pencil, Trash2, EyeOff, Plus, X, Sticker, Pin, PinOff, Info, Forward, Download } from 'lucide-react';
 import type { DecryptedMessage } from '../types/chat';
 
 // Reacciones rápidas, como en WhatsApp
@@ -24,6 +24,8 @@ interface MessageActionsSheetProps {
   fijado?: boolean;
   onFijar?: () => void;
   onInfo?: () => void;
+  onReenviar?: () => void;
+  onDescargar?: () => void;
 }
 
 export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
@@ -42,6 +44,8 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
   fijado,
   onFijar,
   onInfo,
+  onReenviar,
+  onDescargar,
 }) => {
   const isDeleted = message.deleted_for_all;
   const hasText = !!message.payload?.text && !message.decryptionError;
@@ -120,6 +124,14 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
 
         <div className="py-1">
           {!isDeleted && item(<Reply className="w-5 h-5" strokeWidth={2} />, 'Responder', onReply)}
+          {onReenviar && !isDeleted && item(<Forward className="w-5 h-5" strokeWidth={2} />, 'Reenviar', onReenviar)}
+          {onDescargar &&
+            !isDeleted &&
+            item(
+              <Download className="w-5 h-5" strokeWidth={2} />,
+              message.kind === 'video' ? 'Descargar video' : message.kind === 'audio' ? 'Descargar audio' : 'Descargar foto',
+              onDescargar
+            )}
           {hasText && !isDeleted && item(<Copy className="w-5 h-5" strokeWidth={2} />, 'Copiar texto', onCopy)}
           {canEdit && item(<Pencil className="w-5 h-5" strokeWidth={2} />, 'Editar', onEdit)}
           {onSaveSticker &&

@@ -98,7 +98,7 @@ export const FotoConZoom: React.FC<{ src: string; alt?: string }> = ({ src, alt 
     <div
       ref={caja}
       className="w-full h-full flex items-center justify-center overflow-hidden"
-      style={{ touchAction: 'none' }}
+      style={{ touchAction: t.s > 1 ? 'none' : 'pan-x' }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
