@@ -28,6 +28,7 @@ export interface MessagePayload {
     name?: string; // nombre del archivo (canciones)
     music?: boolean; // true = archivo de audio elegido del celular, false = nota de voz
     sticker?: boolean; // se muestra sin burbuja, como sticker
+    hd?: boolean; // foto enviada en alta calidad (lleva la marca "HD")
   };
   // Registro de una llamada (se muestra como burbuja especial)
   llamada?: {

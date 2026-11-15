@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { claveLlave, memoria } from '../lib/memoria';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAtras } from '../lib/atras';
@@ -21,6 +21,9 @@ import {
   Mic,
   Pause,
   Trash2,
+  Copy,
+  Forward,
+  Images,
   Bell,
   BellOff,
   Keyboard,
@@ -59,7 +62,9 @@ import OndaEnVivo, { TiempoGrabacion } from '../components/OndaEnVivo';
 import VistaPreviaGrabacion from '../components/VistaPreviaGrabacion';
 import { AlbumMosaico, AlbumCompleto } from '../components/Album';
 import { Galeria } from '../components/Galeria';
-import { ReenviarA } from '../components/ReenviarA';
+import { MultimediaChat } from '../components/MultimediaChat';
+import { ReenviarA, type DestinoReenvio } from '../components/ReenviarA';
+import { enviarAChat } from '../lib/envioDirecto';
 import { dejarReenvio, tomarReenvio, type ItemReenvio } from '../lib/reenvio';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
@@ -81,7 +86,23 @@ import { OPCIONES_SILENCIO, estaSilenciado, guardarSilencio, leerSilencio, texto
 import { clearChatNotifications, notifyPartner, playIncoming, updateBadge } from '../lib/push';
 import { useAuth } from '../context/AuthContext';
 import { AvatarImage } from '../components/AvatarImage';
-import { MessageItem } from '../components/MessageItem';
+import { MessageItemMemo } from '../components/MessageItem';
+
+// Lista vacía fija (una nueva en cada dibujo haría redibujar todas las burbujas)
+const SIN_REACCIONES: Reaction[] = [];
+
+// Cada objeto de mensaje recibe un número; cambia cuando el mensaje se reemplaza (se actualizó).
+// Sirve para saber si una foto de un álbum cambió sin comparar todo el mensaje.
+const versiones = new WeakMap<DecryptedMessage, number>();
+let ultimaVersion = 0;
+const numeroDe = (m: DecryptedMessage) => {
+  let n = versiones.get(m);
+  if (n === undefined) {
+    n = ++ultimaVersion;
+    versiones.set(m, n);
+  }
+  return n;
+};
 import { EmojiPickerPopover } from '../components/EmojiPickerPopover';
 import { MessageActionsSheet } from '../components/MessageActionsSheet';
 import { MessageMedia, MediaViewer, type UploadState } from '../components/MessageMedia';
@@ -344,6 +365,7 @@ export const ChatPage: React.FC = () => {
   const videoCameraInputRef = useRef<HTMLInputElement>(null);
   const [camara, setCamara] = useState<null | 'foto' | 'video'>(null);
   const [albumAbierto, setAlbumAbierto] = useState<string | null>(null); // id del primer mensaje del álbum
+  const [multimediaOpen, setMultimediaOpen] = useState(false); // fotos, audios y enlaces del chat
   const [enviarExtra, setEnviarExtra] = useState<null | 'ubicacion' | 'contacto'>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<DecryptedMessage[]>([]);
@@ -1452,7 +1474,7 @@ export const ChatPage: React.FC = () => {
   const prepararArchivo = async (file: File, forceAudio = false): Promise<PendingMedia> => {
     if (!forceAudio && file.type.startsWith('image/')) {
       const img = await compressImage(file);
-      return { kind: 'image', blob: img.blob, mime: img.mime, width: img.width, height: img.height, thumb: img.thumb };
+      return { kind: 'image', blob: img.blob, mime: img.mime, width: img.width, height: img.height, thumb: img.thumb, original: file };
     }
     if (!forceAudio && file.type.startsWith('video/')) {
       if (file.size > MAX_FILE_BYTES) throw new Error('Un video pesa más de 25 MB. Recórtalo o grábalo más corto.');
@@ -1589,6 +1611,7 @@ export const ChatPage: React.FC = () => {
         name: media.name,
         music: media.music,
         ...(media.sticker ? { sticker: true } : {}),
+        ...(media.hd ? { hd: true } : {}),
       },
     };
     // Quien envía ve su propio archivo sin bajarlo (excepto "ver una vez")
@@ -1649,6 +1672,30 @@ export const ChatPage: React.FC = () => {
       .filter((x): x is () => Promise<void> => !!x);
     setPendingMedia(null);
     for (const subir of subidas) await subir();
+  };
+
+  /** Envía lo del editor; en HD las fotos se vuelven a preparar desde el original con más calidad */
+  const enviarDelEditor = async (lista: PendingMedia[], caption: string, viewOnce: boolean, hd: boolean) => {
+    if (!hd) return sendMedias(lista, caption, viewOnce);
+    setPreparing(true);
+    try {
+      const listas = await Promise.all(
+        lista.map(async (m) => {
+          if (m.kind !== 'image' || m.sticker || !m.original) return m;
+          try {
+            const img = await compressImage(new File([m.original], 'foto.jpg', { type: m.original.type || 'image/jpeg' }), true);
+            if (img.blob.size > MAX_FILE_BYTES) return m; // muy pesada: va en calidad normal
+            return { ...m, blob: img.blob, mime: img.mime, width: img.width, height: img.height, hd: true };
+          } catch {
+            return m;
+          }
+        })
+      );
+      setPreparing(false);
+      await sendMedias(listas, caption, viewOnce);
+    } finally {
+      setPreparing(false);
+    }
   };
 
   // ----- Stickers -----
@@ -1826,6 +1873,7 @@ export const ChatPage: React.FC = () => {
             name: p.media.name,
             music: p.media.music,
             sticker: p.media.sticker,
+            hd: p.media.hd,
           },
           comentario: p.text,
         });
@@ -1855,10 +1903,10 @@ export const ChatPage: React.FC = () => {
     }
   };
 
-  const reenviarA = async (destino: string) => {
+  const reenviarA = async (destinos: DestinoReenvio[]) => {
     const lista = reenviar;
     setReenviar(null);
-    if (!lista) return;
+    if (!lista || !destinos.length || !user) return;
     setPreparandoReenvio(true);
     try {
       const items = await prepararReenvio(lista);
@@ -1866,12 +1914,29 @@ export const ChatPage: React.FC = () => {
         setToast('Ese mensaje no se puede reenviar');
         return;
       }
-      if (destino === chatId) {
-        await enviarReenvio(items);
-      } else {
-        dejarReenvio(destino, items);
-        navigate(`/chat/${destino}`);
+      // Un solo chat distinto a este: se abre ese chat y se envía ahí (como WhatsApp)
+      if (destinos.length === 1 && destinos[0].chat_id !== chatId) {
+        dejarReenvio(destinos[0].chat_id, items);
+        navigate(`/chat/${destinos[0].chat_id}`);
+        return;
       }
+      // Varios: se envía a todos sin salir de este chat (a este, como un envío normal)
+      const otros = destinos.filter((d) => d.chat_id !== chatId);
+      if (destinos.some((d) => d.chat_id === chatId)) await enviarReenvio(items);
+      const fallidos: string[] = [];
+      for (const d of otros) {
+        try {
+          await enviarAChat(user.id, d.chat_id, d.partner, items);
+        } catch (err) {
+          console.error('[ChatDos] reenviar a', d.chat_id, err);
+          fallidos.push(d.partner.display_name || d.partner.username);
+        }
+      }
+      setToast(
+        fallidos.length
+          ? `No se pudo reenviar a ${fallidos.join(', ')}. Inténtalo de nuevo.`
+          : `Reenviado a ${destinos.length === 1 ? '1 chat' : `${destinos.length} chats`}`
+      );
     } catch (err) {
       console.error('[ChatDos] reenviar', err);
       setToast('No se pudo reenviar. Revisa tu conexión e inténtalo de nuevo.');
@@ -2145,7 +2210,17 @@ export const ChatPage: React.FC = () => {
   limpiarPantallaRef.current = limpiarPantallaDelChat;
 
   // Ir al mensaje original de una cita
-  const goToMessage = (id: string) => {
+  const goToMessage = (idOriginal: string) => {
+    // Una foto dentro de un álbum: se va al álbum
+    let id = idOriginal;
+    if (enAlbum.has(id)) {
+      for (const [primero, lista] of albumes) {
+        if (lista.some((x) => x.id === id)) {
+          id = primero;
+          break;
+        }
+      }
+    }
     const el = document.getElementById(`msg-${id}`);
     if (!el) {
       setToast('El mensaje original no está cargado. Sube y toca "Cargar mensajes anteriores".');
@@ -2311,6 +2386,119 @@ export const ChatPage: React.FC = () => {
     cerrar();
   }
 
+  // Selección de varios mensajes (para reenviar, copiar o borrar juntos)
+  const [seleccion, setSeleccion] = useState<Set<string> | null>(null);
+  /** Un álbum se marca y desmarca completo */
+  const alternarSeleccion = (m: DecryptedMessage) => {
+    const ids = (albumes.get(m.id) ?? [m]).map((x) => x.id);
+    setSeleccion((prev) => {
+      const s = new Set(prev ?? []);
+      const quitar = s.has(ids[0]);
+      ids.forEach((id) => (quitar ? s.delete(id) : s.add(id)));
+      return s.size ? s : null;
+    });
+  };
+
+  // Lo seleccionado, en el orden del chat
+  const seleccionados = seleccion ? visibles.filter((m) => seleccion.has(m.id)) : [];
+  const [confirmarBorrarSel, setConfirmarBorrarSel] = useState(false);
+  useAtras(!!seleccion, () => setSeleccion(null));
+  useAtras(confirmarBorrarSel, () => setConfirmarBorrarSel(false));
+
+  const copiarSeleccion = async () => {
+    const textos = seleccionados.map((m) => m.payload?.text).filter((t): t is string => !!t);
+    if (!textos.length) return;
+    try {
+      await navigator.clipboard.writeText(textos.join('\n'));
+      setToast(textos.length === 1 ? 'Texto copiado' : `${textos.length} mensajes copiados`);
+      setSeleccion(null);
+    } catch {
+      setToast('No se pudo copiar');
+    }
+  };
+
+  const reenviarSeleccion = () => {
+    const lista = seleccionados.filter(sePuedeReenviar);
+    if (!lista.length) return;
+    setSeleccion(null);
+    setReenviar(lista);
+  };
+
+  /** Eliminar para mí varios mensajes a la vez */
+  const borrarSeleccion = async () => {
+    setConfirmarBorrarSel(false);
+    if (!user) return;
+    const lista = seleccionados;
+    const ids = new Set(lista.map((m) => m.id));
+    setSeleccion(null);
+    setMessages((prev) => prev.filter((m) => !ids.has(m.id)));
+    lista.forEach((m) => {
+      borrarMensajeLocal(m.id);
+      quitarDeBandeja(m.id);
+    });
+    const { error } = await supabase
+      .from('message_hidden')
+      .upsert(
+        lista.map((m) => ({ user_id: user.id, message_id: m.id })),
+        { onConflict: 'user_id,message_id', ignoreDuplicates: true }
+      );
+    if (error) {
+      console.error('[ChatDos] eliminar varios para mí', error);
+      // Vuelven a aparecer (en su lugar)
+      setMessages((prev) =>
+        [...prev.filter((m) => !ids.has(m.id)), ...lista].sort((a, b) => a.created_at.localeCompare(b.created_at))
+      );
+      setToast('No se pudieron eliminar. Revisa tu conexión.');
+    } else {
+      setToast(lista.length === 1 ? 'Mensaje eliminado' : `${lista.length} mensajes eliminados`);
+    }
+  };
+
+  // Funciones para las burbujas: siempre las mismas (así una burbuja no se vuelve a dibujar
+  // por nada), pero cada una llama a la versión más reciente de la pantalla.
+  const vivas = useRef<Record<string, (...a: never[]) => unknown>>({});
+  vivas.current = {
+    setActionMsg,
+    startReply,
+    goToMessage,
+    toggleReaction,
+    corazonDobleToque,
+    llamar,
+    dejarUbicacion: (id: string) => dejarDeCompartir(id, avisarUbicacion),
+    abrirReenviar,
+    abrirGaleria,
+    retryUpload,
+    openViewOnce,
+    setAlbumAbierto,
+    alternarSeleccion,
+  } as unknown as Record<string, (...a: never[]) => unknown>;
+  const estables = useMemo(() => {
+    const llamarA =
+      <A extends unknown[]>(nombre: string) =>
+      (...a: A) =>
+        (vivas.current[nombre] as unknown as (...x: A) => unknown)(...a);
+    return {
+      onOpenActions: llamarA<[DecryptedMessage]>('setActionMsg'),
+      onSwipeReply: llamarA<[DecryptedMessage]>('startReply'),
+      onQuoteClick: llamarA<[string]>('goToMessage'),
+      onReactionClick: llamarA<[DecryptedMessage, string]>('toggleReaction'),
+      onDobleToque: llamarA<[DecryptedMessage]>('corazonDobleToque'),
+      onLlamar: llamarA<[TipoLlamada]>('llamar') as (t: TipoLlamada) => void,
+      onDejarUbicacion: llamarA<[string]>('dejarUbicacion') as (id: string) => void,
+      onReenviar: llamarA<[DecryptedMessage]>('abrirReenviar') as (m: DecryptedMessage) => void,
+      onAlternarSeleccion: llamarA<[DecryptedMessage]>('alternarSeleccion') as (m: DecryptedMessage) => void,
+      abrirGaleria: llamarA<[DecryptedMessage, string, 'image' | 'video']>('abrirGaleria') as (
+        m: DecryptedMessage,
+        url: string,
+        kind: 'image' | 'video'
+      ) => void,
+      onRetry: llamarA<[string]>('retryUpload') as (id: string) => void,
+      onOpenViewOnce: llamarA<[DecryptedMessage]>('openViewOnce') as (m: DecryptedMessage) => void,
+      abrirAlbum: llamarA<[string]>('setAlbumAbierto') as (id: string) => void,
+    };
+  }, []);
+
+
   return (
     <div
       className="flex-1 flex flex-col h-full min-h-0 w-full relative overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933]"
@@ -2325,6 +2513,39 @@ export const ChatPage: React.FC = () => {
         className="relative bg-[#003A73] text-white px-3 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30"
         style={{ paddingTop: 'env(safe-area-inset-top)', height: 'calc(3.5rem + env(safe-area-inset-top))' }}
       >
+        {seleccion && (
+          /* Modo selección: cuántos, y reenviar, copiar o eliminar juntos */
+          <div className="absolute inset-x-0 bottom-0 h-14 z-20 bg-[#003A73] flex items-center gap-1 px-1">
+            <button
+              type="button"
+              onClick={() => setSeleccion(null)}
+              className="w-11 h-11 flex items-center justify-center"
+              aria-label="Salir de la selección"
+            >
+              <X className="w-6 h-6" strokeWidth={2} />
+            </button>
+            <span className="flex-1 text-[17px] font-['Poppins'] font-semibold">{seleccionados.length}</span>
+            {seleccionados.some((m) => m.payload?.text) && (
+              <button type="button" onClick={() => void copiarSeleccion()} className="w-11 h-11 flex items-center justify-center" aria-label="Copiar" title="Copiar">
+                <Copy className="w-5 h-5" strokeWidth={2} />
+              </button>
+            )}
+            {seleccionados.some(sePuedeReenviar) && (
+              <button type="button" onClick={reenviarSeleccion} className="w-11 h-11 flex items-center justify-center" aria-label="Reenviar" title="Reenviar">
+                <Forward className="w-5 h-5" strokeWidth={2} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setConfirmarBorrarSel(true)}
+              className="w-11 h-11 flex items-center justify-center"
+              aria-label="Eliminar para mí"
+              title="Eliminar para mí"
+            >
+              <Trash2 className="w-5 h-5" strokeWidth={2} />
+            </button>
+          </div>
+        )}
         {busqueda !== null && (
           <div className="absolute inset-x-0 bottom-0 h-14">
             <BuscarEnChat
@@ -2448,6 +2669,17 @@ export const ChatPage: React.FC = () => {
                     <div className="my-1 border-t border-[#E3E7EC] dark:border-[#003A73]" />
                   </>
                 )}
+
+                <button
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    setMultimediaOpen(true);
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                >
+                  <Images className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+                  <span>Multimedia y enlaces</span>
+                </button>
 
                 <button
                   onClick={() => {
@@ -2685,12 +2917,21 @@ export const ChatPage: React.FC = () => {
                   message={m}
                   isMine={isMine}
                   upload={uploads[m.id]}
-                  onRetry={retryUpload}
-                  onOpenMedia={(url, kind) => abrirGaleria(m, url, kind)}
-                  onOpenViewOnce={openViewOnce}
+                  onRetry={estables.onRetry}
+                  onOpenMedia={(url, kind) => estables.abrirGaleria(m, url, kind)}
+                  onOpenViewOnce={estables.onOpenViewOnce}
                   mosaico
                 />
               );
+              // Lo que cambia el adjunto: si no cambia esto ni el mensaje, la burbuja no se redibuja
+              const avatarAutor = isMine ? myProfile?.avatar_path : partner?.avatar_path;
+              const firma =
+                (album ?? [msg])
+                  .map((m) => {
+                    const u = uploads[m.id];
+                    return `${numeroDe(m)}:${u ? `${u.pct}${u.failed ? 'x' : ''}` : ''}`;
+                  })
+                  .join(',') + `|${avatarAutor ?? ''}|${isMine ? myProfile?.display_name : partnerName}`;
 
               const currentMsgDate = formatMessageDateSeparator(
                 msg.payload?.sentAt || msg.created_at
@@ -2724,45 +2965,48 @@ export const ChatPage: React.FC = () => {
                     </div>
                   )}
 
-                  <MessageItem
+                  <MessageItemMemo
                     message={msg}
                     isMine={isMine}
                     myId={user?.id || ''}
                     partnerName={partnerName}
-                    reactions={reactions[msg.id] || []}
+                    reactions={reactions[msg.id] || SIN_REACCIONES}
                     highlighted={highlightId === msg.id}
                     isFirstInGroup={isFirstInGroup}
-                    onOpenActions={setActionMsg}
-                    onSwipeReply={startReply}
+                    onOpenActions={estables.onOpenActions}
+                    onSwipeReply={estables.onSwipeReply}
+                    firma={firma}
                     media={
                       album ? (
-                        <AlbumMosaico mensajes={album} casilla={casilla} onVerTodo={() => setAlbumAbierto(msg.id)} />
+                        <AlbumMosaico mensajes={album} casilla={casilla} onVerTodo={() => estables.abrirAlbum(msg.id)} />
                       ) : msg.kind !== 'text' && !msg.deleted_for_all && !msg.decryptionError ? (
                         <MessageMedia
                           message={msg}
                           isMine={isMine}
                           upload={uploads[msg.id]}
-                          onRetry={retryUpload}
-                          onOpenMedia={(url, kind) => abrirGaleria(msg, url, kind)}
-                          onOpenViewOnce={openViewOnce}
-                          autorAvatar={isMine ? myProfile?.avatar_path : partner?.avatar_path}
+                          onRetry={estables.onRetry}
+                          onOpenMedia={(url, kind) => estables.abrirGaleria(msg, url, kind)}
+                          onOpenViewOnce={estables.onOpenViewOnce}
+                          autorAvatar={avatarAutor}
                           autorNombre={isMine ? myProfile?.display_name || myProfile?.username : partnerName}
                         />
                       ) : undefined
                     }
-                    onQuoteClick={goToMessage}
-                    onReactionClick={toggleReaction}
+                    onQuoteClick={estables.onQuoteClick}
+                    onReactionClick={estables.onReactionClick}
                     busqueda={busqueda ?? ''}
                     fijado={ajustes.fijado === msg.id}
-                    onDobleToque={corazonDobleToque}
-                    onLlamar={(t) => void llamar(t)}
-                    onDejarUbicacion={(id) => void dejarDeCompartir(id, avisarUbicacion)}
-                    onReenviar={
-                      (album || ((msg.kind === 'image' || msg.kind === 'video') && !msg.payload?.media?.sticker)) &&
+                    onDobleToque={estables.onDobleToque}
+                    onLlamar={estables.onLlamar}
+                    onDejarUbicacion={estables.onDejarUbicacion}
+                    onReenviar={estables.onReenviar}
+                    reenviable={
+                      !!(album || ((msg.kind === 'image' || msg.kind === 'video') && !msg.payload?.media?.sticker)) &&
                       sePuedeReenviar(msg)
-                        ? () => abrirReenviar(msg)
-                        : undefined
                     }
+                    seleccionando={!!seleccion}
+                    seleccionado={!!seleccion?.has(msg.id)}
+                    onAlternarSeleccion={estables.onAlternarSeleccion}
                   />
                 </React.Fragment>
               );
@@ -3370,7 +3614,7 @@ export const ChatPage: React.FC = () => {
           onCambiar={(i, m) => setPendingMedia((l) => (l ? l.map((x, j) => (j === i ? m : x)) : l))}
           userId={user?.id}
           miLlavePublica={myProfile?.public_key}
-          onSend={({ caption, viewOnce }) => sendMedias(pendingMedia, caption, viewOnce)}
+          onSend={({ caption, viewOnce, hd }) => void enviarDelEditor(pendingMedia, caption, viewOnce, hd)}
         />
       )}
 
@@ -3413,6 +3657,11 @@ export const ChatPage: React.FC = () => {
           onFijar={() => void alternarFijado(actionMsg)}
           onReenviar={sePuedeReenviar(actionMsg) ? () => abrirReenviar(actionMsg) : undefined}
           onDescargar={sePuedeDescargar(actionMsg) ? () => void descargarMensaje(actionMsg) : undefined}
+          onSeleccionar={() => {
+            const m = actionMsg;
+            setActionMsg(null);
+            setSeleccion(new Set((albumes.get(m.id) ?? [m]).map((x) => x.id)));
+          }}
           onInfo={() => {
             setInfoMsg(actionMsg);
             setActionMsg(null);
@@ -3420,6 +3669,57 @@ export const ChatPage: React.FC = () => {
         />
       )}
 
+      {multimediaOpen && (
+        <MultimediaChat
+          mensajes={visibles}
+          nombre={partnerName}
+          casilla={(m) => (
+            <MessageMedia
+              message={m}
+              isMine={m.sender_id === user?.id}
+              upload={uploads[m.id]}
+              onRetry={estables.onRetry}
+              onOpenMedia={(url, kind) => estables.abrirGaleria(m, url, kind)}
+              onOpenViewOnce={estables.onOpenViewOnce}
+              mosaico
+            />
+          )}
+          audio={(m) => (
+            <MessageMedia
+              message={m}
+              isMine={false}
+              upload={uploads[m.id]}
+              onRetry={estables.onRetry}
+              onOpenMedia={() => {}}
+              onOpenViewOnce={estables.onOpenViewOnce}
+              autorAvatar={m.sender_id === user?.id ? myProfile?.avatar_path : partner?.avatar_path}
+              autorNombre={m.sender_id === user?.id ? myProfile?.display_name || myProfile?.username : partnerName}
+            />
+          )}
+          autor={(m) => (m.sender_id === user?.id ? 'Tú' : partnerName)}
+          hayAnteriores={hasMoreOlder}
+          onCargarAnteriores={loadOlderMessages}
+          onCerrar={() => setMultimediaOpen(false)}
+        />
+      )}
+      {confirmarBorrarSel && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6" onClick={() => setConfirmarBorrarSel(false)}>
+          <div className="w-full max-w-xs bg-white dark:bg-[#253240] rounded-[8px] p-4 shadow-[0_4px_16px_rgba(0,0,0,0.25)]" onClick={(e) => e.stopPropagation()}>
+            <p className="text-[15px] font-['Inter'] text-[#1F2933] dark:text-white">
+              {seleccionados.length === 1 ? '¿Eliminar este mensaje para ti?' : `¿Eliminar ${seleccionados.length} mensajes para ti?`}
+            </p>
+            <p className="mt-1 text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">{partnerName} los seguirá viendo.</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmarBorrarSel(false)} className="h-10 px-4 rounded-[5px] text-sm font-['Inter'] font-medium text-[#005198] dark:text-white">
+                Cancelar
+              </button>
+              <button type="button" onClick={() => void borrarSeleccion()} className="h-10 px-4 rounded-[5px] bg-[#B03030] text-white text-sm font-['Inter'] font-medium">
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {galeria && (
         <Galeria
           items={galeria.items}
@@ -3431,6 +3731,12 @@ export const ChatPage: React.FC = () => {
             setGaleria(null);
             abrirReenviar(m);
           }}
+          onResponder={(m) => {
+            setGaleria(null);
+            setAlbumAbierto(null);
+            setMultimediaOpen(false);
+            startReply(m);
+          }}
           onCerrar={() => setGaleria(null)}
         />
       )}
@@ -3439,13 +3745,13 @@ export const ChatPage: React.FC = () => {
           userId={user.id}
           chatActual={chatId || ''}
           cuantos={reenviar.length}
-          onElegir={(destino) => void reenviarA(destino)}
+          onEnviar={(destinos) => void reenviarA(destinos)}
           onCerrar={() => setReenviar(null)}
         />
       )}
       {preparandoReenvio && (
         <div className="fixed inset-x-0 top-20 z-[56] flex justify-center pointer-events-none">
-          <span className="px-4 py-2 rounded-full bg-[#1F2933]/90 text-white text-sm font-['Inter'] shadow">Preparando para reenviar…</span>
+          <span className="px-4 py-2 rounded-full bg-[#1F2933]/90 text-white text-sm font-['Inter'] shadow">Reenviando…</span>
         </div>
       )}
       {albumAbierto && albumes.get(albumAbierto) && (

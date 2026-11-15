@@ -1,0 +1,31 @@
+name: Revisar cambios
+
+# En cada pull request: revisa que el código compile antes de unirlo a main
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Revisar el código (TypeScript)
+        run: npm run lint
+
+      - name: Compilar (prueba)
+        run: npm run build

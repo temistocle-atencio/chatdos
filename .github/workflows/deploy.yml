@@ -21,7 +21,7 @@ jobs:
   build-and-deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.reintento.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Descargar repositorio
@@ -34,6 +34,10 @@ jobs:
 
       - name: Instalar dependencias
         run: npm install
+
+      # Si el código tiene errores, se detiene aquí y NO se publica nada
+      - name: Revisar el código (TypeScript)
+        run: npm run lint
 
       - name: Compilar proyecto para producción
         env:
@@ -49,6 +53,17 @@ jobs:
         with:
           path: './dist'
 
+      # A veces GitHub falla al publicar por un problema suyo: se espera y se intenta otra vez
       - name: Desplegar en GitHub Pages
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+
+      - name: Esperar antes de reintentar
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 45
+
+      - name: Desplegar en GitHub Pages (segundo intento)
+        id: reintento
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4

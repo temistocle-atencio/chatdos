@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, MoreVertical, Download, Forward, ChevronLeft, ChevronRight, Loader2, Play } from 'lucide-react';
+import { ArrowLeft, MoreVertical, Download, Forward, ChevronLeft, ChevronRight, Loader2, Play, Reply } from 'lucide-react';
 import { FotoConZoom } from './FotoConZoom';
 import { useAtras } from '../lib/atras';
 import { formatMessageDateSeparator, formatMessageTime } from '../lib/formatters';
@@ -19,6 +19,8 @@ type Props = {
   obtenerUrl: (m: DecryptedMessage) => Promise<string | undefined>;
   onDescargar: (m: DecryptedMessage) => void;
   onReenviar?: (m: DecryptedMessage) => void;
+  /** Responder a esta foto o video en el chat */
+  onResponder?: (m: DecryptedMessage) => void;
   onCerrar: () => void;
 };
 
@@ -77,7 +79,7 @@ const Diapositiva: React.FC<{
   );
 };
 
-export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onDescargar, onReenviar, onCerrar }) => {
+export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onDescargar, onReenviar, onResponder, onCerrar }) => {
   useAtras(true, onCerrar);
   const pista = useRef<HTMLDivElement>(null);
   const [actual, setActual] = useState(inicio);
@@ -175,6 +177,19 @@ export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onD
                 <Download className="w-5 h-5" strokeWidth={2} />
                 {m.kind === 'video' ? 'Descargar video' : 'Descargar foto'}
               </button>
+              {onResponder && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenu(false);
+                    onResponder(m);
+                  }}
+                  className="w-full h-12 px-4 flex items-center gap-3 text-sm font-['Inter'] text-[#1F2933] dark:text-white hover:bg-[#F2F4F7] dark:hover:bg-white/5"
+                >
+                  <Reply className="w-5 h-5" strokeWidth={2} />
+                  Responder
+                </button>
+              )}
               {onReenviar && (
                 <button
                   type="button"

@@ -18,6 +18,9 @@ export interface PendingMedia {
   name?: string;
   music?: boolean;
   sticker?: boolean;
+  /** Foto original (sin reducir): se usa si se envía en HD */
+  original?: Blob;
+  hd?: boolean;
 }
 
 // Menú para elegir qué adjuntar (cuadrícula como en WhatsApp)
@@ -70,7 +73,7 @@ export const MediaComposer: React.FC<{
   medias: PendingMedia[];
   onCancel: () => void;
   onRemove: (index: number) => void;
-  onSend: (opts: { caption: string; viewOnce: boolean }) => void;
+  onSend: (opts: { caption: string; viewOnce: boolean; hd: boolean }) => void;
   /** Reemplaza un archivo por su versión editada */
   onCambiar?: (index: number, m: PendingMedia) => void;
   userId?: string;
@@ -78,6 +81,7 @@ export const MediaComposer: React.FC<{
 }> = ({ medias, onCancel, onRemove, onSend, onCambiar, userId, miLlavePublica }) => {
   const [caption, setCaption] = useState('');
   const [viewOnce, setViewOnce] = useState(false);
+  const [hd, setHd] = useState(false); // fotos en alta calidad
   const [actual, setActual] = useState(0);
   const [urls, setUrls] = useState<string[]>([]);
   const [editarFoto, setEditarFoto] = useState<HerramientaFoto | null>(null);
@@ -109,7 +113,7 @@ export const MediaComposer: React.FC<{
     setPreparando(true);
     try {
       const img = await compressImage(new File([b], 'foto.jpg', { type: b.type || 'image/jpeg' }));
-      onCambiar?.(indice, { kind: 'image', blob: img.blob, mime: img.mime, width: img.width, height: img.height, thumb: img.thumb });
+      onCambiar?.(indice, { kind: 'image', blob: img.blob, mime: img.mime, width: img.width, height: img.height, thumb: img.thumb, original: b });
     } finally {
       setPreparando(false);
     }
@@ -148,6 +152,21 @@ export const MediaComposer: React.FC<{
       <div className="flex items-center gap-2 px-3 pt-2.5 pb-2 shrink-0 text-white">
         {boton('Cancelar', onCancel, <X className="w-6 h-6" strokeWidth={2} />)}
         <div className="flex-1" />
+        {/* HD: enviar las fotos con más calidad (pesan más) */}
+        {medias.some((m) => m.kind === 'image' && !m.sticker && m.original) && (
+          <button
+            type="button"
+            onClick={() => setHd((v) => !v)}
+            className={`h-11 px-3 rounded-full flex items-center justify-center text-[13px] font-['Poppins'] font-bold tracking-wide ${
+              hd ? 'bg-white text-[#1F2933]' : 'bg-black/45 text-white'
+            }`}
+            aria-pressed={hd}
+            aria-label="Enviar en HD (más calidad)"
+            title={hd ? 'HD: más calidad (pesa más)' : 'Calidad normal'}
+          >
+            HD
+          </button>
+        )}
         {sePuedeEditar && media.kind === 'image' && (
           <>
             {boton('Recortar y girar', () => setEditarFoto('recortar'), <Crop className="w-5 h-5" strokeWidth={2} />)}
@@ -268,7 +287,7 @@ export const MediaComposer: React.FC<{
         )}
         <button
           type="button"
-          onClick={() => onSend({ caption: caption.trim(), viewOnce })}
+          onClick={() => onSend({ caption: caption.trim(), viewOnce, hd })}
           disabled={preparando}
           className="w-12 h-12 shrink-0 flex items-center justify-center rounded-full bg-[#F28C1B] text-[#1F2933] disabled:opacity-50"
           aria-label="Enviar"
