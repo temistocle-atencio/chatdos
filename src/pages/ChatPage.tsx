@@ -129,6 +129,7 @@ import {
   olvidarArchivoGuardado,
   descargarArchivo,
   nombreDescarga,
+  respirar,
 } from '../lib/media';
 import {
   getLocalPrivateKey,
@@ -1507,6 +1508,7 @@ export const ChatPage: React.FC = () => {
     const lista = Array.from(files ?? []);
     if (!lista.length) return;
     setPreparing(true);
+    await respirar(); // que se cierre la cámara y se vea "preparando" antes del trabajo pesado
     const listos: PendingMedia[] = [];
     let aviso: string | null = lista.length > MAX_A_LA_VEZ ? `Se tomaron las primeras ${MAX_A_LA_VEZ}` : null;
     for (const f of lista.slice(0, MAX_A_LA_VEZ)) {
@@ -1707,7 +1709,10 @@ export const ChatPage: React.FC = () => {
   const enviarDelEditor = async (lista: PendingMedia[], caption: string, viewOnce: boolean, calidad: Calidad) => {
     if (calidad === 'normal') return sendMedias(lista, caption, viewOnce);
     const conOriginal = calidad === 'original' && !viewOnce;
+    // El editor se cierra al instante; las fotos se preparan después sin trabar la pantalla
+    setPendingMedia(null);
     setPreparing(true);
+    await respirar();
     try {
       const listas = await Promise.all(
         lista.map(async (m) => {
