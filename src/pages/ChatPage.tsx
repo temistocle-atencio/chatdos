@@ -2991,6 +2991,8 @@ export const ChatPage: React.FC = () => {
           onCancel={() => setPendingMedia(null)}
           onRemove={(i) => setPendingMedia((l) => (l && l.length > 1 ? l.filter((_, j) => j !== i) : null))}
           onCambiar={(i, m) => setPendingMedia((l) => (l ? l.map((x, j) => (j === i ? m : x)) : l))}
+          userId={user?.id}
+          miLlavePublica={myProfile?.public_key}
           onSend={({ caption, viewOnce }) => sendMedias(pendingMedia, caption, viewOnce)}
         />
       )}

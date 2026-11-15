@@ -3,7 +3,7 @@ import { X, Send, Music, Eye, EyeOff, Play, Crop, Smile, Type, Pencil, Scissors,
 import { compressImage, formatBytes, formatDuration, inspectVideo } from '../lib/media';
 import { EditorFoto, type HerramientaFoto } from './EditorFoto';
 import { EditorVideo } from './EditorVideo';
-import { IconoCamaraColor, IconoContactoColor, IconoGaleriaColor, IconoUbicacionColor } from './Iconos';
+import { IconoCamaraColor, IconoContactoColor, IconoGaleriaColor, IconoSticker, IconoUbicacionColor } from './Iconos';
 
 // Archivo listo para enviar (ya comprimido o revisado)
 export interface PendingMedia {
@@ -72,7 +72,9 @@ export const MediaComposer: React.FC<{
   onSend: (opts: { caption: string; viewOnce: boolean }) => void;
   /** Reemplaza un archivo por su versión editada */
   onCambiar?: (index: number, m: PendingMedia) => void;
-}> = ({ medias, onCancel, onRemove, onSend, onCambiar }) => {
+  userId?: string;
+  miLlavePublica?: unknown;
+}> = ({ medias, onCancel, onRemove, onSend, onCambiar, userId, miLlavePublica }) => {
   const [caption, setCaption] = useState('');
   const [viewOnce, setViewOnce] = useState(false);
   const [actual, setActual] = useState(0);
@@ -145,12 +147,18 @@ export const MediaComposer: React.FC<{
         {sePuedeEditar && media.kind === 'image' && (
           <>
             {boton('Recortar y girar', () => setEditarFoto('recortar'), <Crop className="w-5 h-5" strokeWidth={2} />)}
+            {userId && boton('Stickers', () => setEditarFoto('sticker'), <IconoSticker className="w-5 h-5" />)}
             {boton('Emojis', () => setEditarFoto('emoji'), <Smile className="w-5 h-5" strokeWidth={2} />)}
             {boton('Texto', () => setEditarFoto('texto'), <Type className="w-5 h-5" strokeWidth={2} />)}
             {boton('Dibujar', () => setEditarFoto('dibujar'), <Pencil className="w-5 h-5" strokeWidth={2} />)}
           </>
         )}
-        {sePuedeEditar && media.kind === 'video' && boton('Recortar o quitar el sonido', () => setEditarVideo(true), <Scissors className="w-5 h-5" strokeWidth={2} />)}
+        {sePuedeEditar && media.kind === 'video' && (
+          <>
+            {boton('Recortar o quitar el sonido', () => setEditarVideo(true), <Scissors className="w-5 h-5" strokeWidth={2} />)}
+            {boton('Stickers, emojis, texto y dibujo', () => setEditarVideo(true), <Pencil className="w-5 h-5" strokeWidth={2} />)}
+          </>
+        )}
       </div>
 
       <div className="relative flex-1 min-h-0 flex items-center justify-center p-1">
@@ -269,12 +277,21 @@ export const MediaComposer: React.FC<{
       </div>
 
       {editarFoto && (
-        <EditorFoto imagen={media.blob} herramienta={editarFoto} onCancelar={() => setEditarFoto(null)} onListo={(b) => void fotoEditada(b)} />
+        <EditorFoto
+          imagen={media.blob}
+          herramienta={editarFoto}
+          userId={userId}
+          miLlavePublica={miLlavePublica}
+          onCancelar={() => setEditarFoto(null)}
+          onListo={(b) => void fotoEditada(b)}
+        />
       )}
       {editarVideo && (
         <EditorVideo
           video={media.blob}
           duracion={media.duration || 0}
+          userId={userId}
+          miLlavePublica={miLlavePublica}
           onCancelar={() => setEditarVideo(false)}
           onListo={(r) => void videoEditado(r)}
         />

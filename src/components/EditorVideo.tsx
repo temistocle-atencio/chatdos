@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Check, Volume2, VolumeX, Play, Loader2 } from 'lucide-react';
+import { X, Check, Volume2, VolumeX, Play, Loader2, Smile, Type, Pencil } from 'lucide-react';
+import { EditorFoto, type HerramientaFoto } from './EditorFoto';
+import { IconoSticker } from './Iconos';
 import { formatBytes, formatDuration } from '../lib/media';
 
 // Editor de video antes de enviar (como WhatsApp): recortar el inicio y el final, y quitar el sonido.
@@ -16,7 +18,8 @@ async function regrabar(
   inicio: number,
   fin: number,
   sinSonido: boolean,
-  alAvanzar: (p: number) => void
+  alAvanzar: (p: number) => void,
+  capa: HTMLImageElement | null = null
 ): Promise<{ blob: Blob; duracion: number }> {
   const url = URL.createObjectURL(fuente);
   const v = document.createElement('video');
@@ -60,13 +63,17 @@ async function regrabar(
 
   v.currentTime = inicio;
   await new Promise<void>((ok) => (v.onseeked = () => ok()));
-  ctx.drawImage(v, 0, 0, c.width, c.height);
+  const cuadro = () => {
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    if (capa) ctx.drawImage(capa, 0, 0, c.width, c.height); // textos, emojis, stickers y dibujos encima
+  };
+  cuadro();
   await audio?.resume();
   rec.start(500);
   await v.play();
   await new Promise<void>((ok) => {
     const paso = () => {
-      ctx.drawImage(v, 0, 0, c.width, c.height);
+      cuadro();
       alAvanzar(Math.min(1, (v.currentTime - inicio) / Math.max(0.1, fin - inicio)));
       if (v.currentTime >= fin || v.ended) {
         v.pause();
@@ -86,12 +93,25 @@ async function regrabar(
   return { blob: new Blob(trozos, { type: mime }), duracion: fin - inicio };
 }
 
+const cargarImg = (b: Blob) =>
+  new Promise<HTMLImageElement>((ok, mal) => {
+    const i = new Image();
+    i.onload = () => ok(i);
+    i.onerror = () => mal(new Error('No se pudo preparar'));
+    i.src = URL.createObjectURL(b);
+  });
+
 export const EditorVideo: React.FC<{
   video: Blob;
   duracion: number;
   onCancelar: () => void;
   onListo: (r: { blob: Blob; duracion: number }) => void;
-}> = ({ video, duracion, onCancelar, onListo }) => {
+  userId?: string;
+  miLlavePublica?: unknown;
+}> = ({ video, duracion, onCancelar, onListo, userId, miLlavePublica }) => {
+  // Capa con textos, emojis, stickers y dibujos (PNG transparente del tamaño del video)
+  const [capa, setCapa] = useState<{ blob: Blob; url: string } | null>(null);
+  const [editarCapa, setEditarCapa] = useState<{ herramienta: HerramientaFoto; guia: Blob } | null>(null);
   const [url] = useState(() => URL.createObjectURL(video));
   const vRef = useRef<HTMLVideoElement>(null);
   const barraRef = useRef<HTMLDivElement>(null);
@@ -186,7 +206,39 @@ export const EditorVideo: React.FC<{
     }
   };
 
-  const cambio = inicio > 0.05 || fin < total - 0.05 || sinSonido;
+  const cambio = inicio > 0.05 || fin < total - 0.05 || sinSonido || !!capa;
+
+  // Abre el editor de fotos sobre el cuadro actual del video (solo de guía)
+  const abrirCapa = async (herramienta: HerramientaFoto) => {
+    const v = vRef.current;
+    if (!v || !v.videoWidth) return;
+    v.pause();
+    const k = Math.min(1, 1080 / Math.max(v.videoWidth, v.videoHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(v.videoWidth * k);
+    c.height = Math.round(v.videoHeight * k);
+    const ctx = c.getContext('2d')!;
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    if (capa) ctx.drawImage(await cargarImg(capa.blob), 0, 0, c.width, c.height);
+    c.toBlob((b) => b && setEditarCapa({ herramienta, guia: b }), 'image/jpeg', 0.85);
+  };
+
+  // Junta lo nuevo con lo que ya había
+  const capaLista = async (nueva: Blob) => {
+    setEditarCapa(null);
+    const img = await cargarImg(nueva);
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const ctx = c.getContext('2d')!;
+    if (capa) ctx.drawImage(await cargarImg(capa.blob), 0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0);
+    c.toBlob((b) => {
+      if (!b) return;
+      if (capa) URL.revokeObjectURL(capa.url);
+      setCapa({ blob: b, url: URL.createObjectURL(b) });
+    }, 'image/png');
+  };
   const pesoAprox = total ? (video.size * (fin - inicio)) / total : video.size;
 
   const terminar = async () => {
@@ -195,7 +247,7 @@ export const EditorVideo: React.FC<{
     setError(null);
     setProgreso(0);
     try {
-      const r = await regrabar(video, inicio, fin, sinSonido, setProgreso);
+      const r = await regrabar(video, inicio, fin, sinSonido, setProgreso, capa ? await cargarImg(capa.blob) : null);
       onListo(r);
     } catch (e) {
       setProgreso(null);
@@ -213,6 +265,25 @@ export const EditorVideo: React.FC<{
           <X className="w-6 h-6" strokeWidth={2} />
         </button>
         <div className="flex-1" />
+        {(
+          [
+            ...(userId ? [['sticker', 'Stickers', <IconoSticker key="s" className="w-5 h-5" />]] : []),
+            ['emoji', 'Emojis', <Smile key="e" className="w-5 h-5" strokeWidth={2} />],
+            ['texto', 'Texto', <Type key="t" className="w-5 h-5" strokeWidth={2} />],
+            ['dibujar', 'Dibujar', <Pencil key="d" className="w-5 h-5" strokeWidth={2} />],
+          ] as [HerramientaFoto, string, React.ReactNode][]
+        ).map(([h, etiqueta, icono]) => (
+          <button
+            key={h}
+            type="button"
+            onClick={() => void abrirCapa(h)}
+            className="w-11 h-11 rounded-full bg-black/45 flex items-center justify-center"
+            aria-label={etiqueta}
+            title={etiqueta}
+          >
+            {icono}
+          </button>
+        ))}
         <button
           type="button"
           onClick={() => setSinSonido((v) => !v)}
@@ -220,7 +291,7 @@ export const EditorVideo: React.FC<{
           aria-pressed={sinSonido}
         >
           {sinSonido ? <VolumeX className="w-5 h-5" strokeWidth={2} /> : <Volume2 className="w-5 h-5" strokeWidth={2} />}
-          {sinSonido ? 'Sin sonido' : 'Con sonido'}
+          <span className="sr-only sm:not-sr-only">{sinSonido ? 'Sin sonido' : 'Con sonido'}</span>
         </button>
       </div>
 
@@ -270,15 +341,31 @@ export const EditorVideo: React.FC<{
 
       {/* Video */}
       <div className="relative flex-1 min-h-0 flex items-center justify-center p-3" onClick={alternar}>
-        <video
-          ref={vRef}
-          src={url}
-          playsInline
-          muted={sinSonido}
-          onPlay={() => setJugando(true)}
-          onPause={() => setJugando(false)}
-          className="max-w-full max-h-full"
-        />
+        <div className="relative inline-block max-w-full max-h-full">
+          <video
+            ref={vRef}
+            src={url}
+            playsInline
+            muted={sinSonido}
+            onPlay={() => setJugando(true)}
+            onPause={() => setJugando(false)}
+            className="block max-w-full max-h-[calc(100dvh-260px)]"
+          />
+          {capa && <img src={capa.url} alt="" className="absolute inset-0 w-full h-full pointer-events-none" />}
+          {capa && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                URL.revokeObjectURL(capa.url);
+                setCapa(null);
+              }}
+              className="absolute top-2 right-2 h-8 px-3 rounded-full bg-black/60 text-xs"
+            >
+              Quitar lo agregado
+            </button>
+          )}
+        </div>
         {!jugando && (
           <span className="absolute w-16 h-16 rounded-full bg-black/50 flex items-center justify-center pointer-events-none">
             <Play className="w-8 h-8 ml-1" strokeWidth={2} fill="currentColor" />
@@ -297,6 +384,18 @@ export const EditorVideo: React.FC<{
           <Check className="w-5 h-5" strokeWidth={2.5} /> Listo
         </button>
       </div>
+
+      {editarCapa && (
+        <EditorFoto
+          imagen={editarCapa.guia}
+          herramienta={editarCapa.herramienta}
+          capa
+          userId={userId}
+          miLlavePublica={miLlavePublica}
+          onCancelar={() => setEditarCapa(null)}
+          onListo={(b) => void capaLista(b)}
+        />
+      )}
 
       {progreso !== null && (
         <div className="absolute inset-0 z-10 bg-black/75 flex flex-col items-center justify-center gap-3">

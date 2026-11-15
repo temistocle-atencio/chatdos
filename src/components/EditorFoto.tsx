@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Check, Undo2, RotateCcw, Trash2, Crop, Pencil, Type, Smile } from 'lucide-react';
+import { IconoSticker } from './Iconos';
+import { SelectorStickers } from './SelectorStickers';
 
 // Editor de fotos antes de enviar (como WhatsApp): recortar y girar, dibujar, escribir y poner emojis.
 // Todo se hace en el celular y el resultado es una foto nueva.
 
-export type HerramientaFoto = 'recortar' | 'dibujar' | 'texto' | 'emoji';
+export type HerramientaFoto = 'recortar' | 'dibujar' | 'texto' | 'emoji' | 'sticker';
 
 const COLORES = ['#FFFFFF', '#1F2933', '#E5484D', '#F28C1B', '#FFD60A', '#1E9E5A', '#005198', '#C084FC'];
 const EMOJIS = ['😂', '❤️', '😍', '🥰', '😘', '😊', '😎', '🤩', '😜', '🤔', '😢', '😭', '😡', '🥳', '😴', '🤗', '👍', '👏', '🙌', '🙏', '💪', '🔥', '✨', '⭐', '🎉', '🎂', '🌹', '🌸', '☀️', '🌙', '💯', '💋', '👀', '😱', '🤣', '😇', '🐶', '🐱', '🍕', '☕'];
@@ -23,7 +25,8 @@ interface Trazo {
 }
 interface Pegado {
   id: string;
-  tipo: 'texto' | 'emoji';
+  tipo: 'texto' | 'emoji' | 'sticker';
+  img?: HTMLImageElement; // stickers
   valor: string;
   color: string;
   x: number; // centro, px de la foto
@@ -48,7 +51,10 @@ function pintarPegado(ctx: CanvasRenderingContext2D, p: Pegado) {
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  if (p.tipo === 'emoji') {
+  if (p.tipo === 'sticker' && p.img) {
+    const h = (p.tam * p.img.naturalHeight) / Math.max(1, p.img.naturalWidth);
+    ctx.drawImage(p.img, p.x - p.tam / 2, p.y - h / 2, p.tam, h);
+  } else if (p.tipo === 'emoji') {
     ctx.font = `${p.tam}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
     ctx.fillText(p.valor, p.x, p.y);
   } else {
@@ -89,6 +95,7 @@ function pintarTrazo(ctx: CanvasRenderingContext2D, t: Trazo) {
 }
 
 function medirPegado(ctx: CanvasRenderingContext2D, p: Pegado) {
+  if (p.tipo === 'sticker' && p.img) return { w: p.tam, h: (p.tam * p.img.naturalHeight) / Math.max(1, p.img.naturalWidth) };
   if (p.tipo === 'emoji') return { w: p.tam * 1.1, h: p.tam * 1.1 };
   ctx.font = FUENTE(p.tam);
   const ls = p.valor.split('\n');
@@ -109,8 +116,16 @@ export const EditorFoto: React.FC<{
   herramienta: HerramientaFoto;
   onCancelar: () => void;
   onListo: (b: Blob) => void;
-}> = ({ imagen, herramienta, onCancelar, onListo }) => {
-  const [modo, setModo] = useState<HerramientaFoto | 'ver'>(herramienta === 'texto' || herramienta === 'emoji' ? 'ver' : herramienta);
+  /** Para stickers propios */
+  userId?: string;
+  miLlavePublica?: unknown;
+  /** Modo capa (videos): la imagen es solo de guía y el resultado es un PNG transparente con lo agregado */
+  capa?: boolean;
+}> = ({ imagen, herramienta, onCancelar, onListo, userId, miLlavePublica, capa = false }) => {
+  const [stickers, setStickers] = useState(herramienta === 'sticker');
+  const [modo, setModo] = useState<HerramientaFoto | 'ver'>(
+    herramienta === 'texto' || herramienta === 'emoji' || herramienta === 'sticker' ? 'ver' : herramienta
+  );
   const baseRef = useRef<HTMLCanvasElement | null>(null); // la foto (ya recortada/girada)
   const vistaRef = useRef<HTMLCanvasElement>(null);
   const cajaRef = useRef<HTMLDivElement>(null);
@@ -397,6 +412,17 @@ export const EditorFoto: React.FC<{
     setElegido(id);
   };
 
+  const ponerSticker = (url: string) => {
+    setStickers(false);
+    const img = new Image();
+    img.onload = () => {
+      const id = crypto.randomUUID();
+      setPegados((l) => [...l, { id, tipo: 'sticker', valor: '', img, color: '#000000', x: tam.w / 2, y: tam.h / 2, tam: Math.min(tam.w, tam.h) / 2.5 }]);
+      setElegido(id);
+    };
+    img.src = url;
+  };
+
   const sel = pegados.find((p) => p.id === elegido);
 
   // ---------- Terminar ----------
@@ -411,14 +437,15 @@ export const EditorFoto: React.FC<{
       c.width = b.width;
       c.height = b.height;
       const ctx = c.getContext('2d')!;
-      ctx.drawImage(b, 0, 0);
+      if (!capa) ctx.drawImage(b, 0, 0);
       trazos.forEach((t) => pintarTrazo(ctx, t));
       pegados.forEach((p) => pintarPegado(ctx, p));
-      c.toBlob((bl) => bl && onListo(bl), 'image/jpeg', 0.92);
+      if (capa) c.toBlob((bl) => bl && onListo(bl), 'image/png');
+      else c.toBlob((bl) => bl && onListo(bl), 'image/jpeg', 0.92);
     }, 30);
   };
 
-  const herramientaBtn = (h: HerramientaFoto, Icono: typeof Crop, etiqueta: string) => (
+  const herramientaBtn = (h: HerramientaFoto, Icono: React.FC<{ className?: string; strokeWidth?: number }>, etiqueta: string) => (
     <button
       type="button"
       onClick={() => {
@@ -428,6 +455,9 @@ export const EditorFoto: React.FC<{
         } else if (h === 'emoji') {
           setModo('ver');
           setEmojis(true);
+        } else if (h === 'sticker') {
+          setModo('ver');
+          setStickers(true);
         } else setModo(modo === h ? 'ver' : h);
       }}
       className={`w-11 h-11 rounded-full flex items-center justify-center ${modo === h ? 'bg-white text-[#1F2933]' : 'bg-black/45 text-white'}`}
@@ -459,7 +489,8 @@ export const EditorFoto: React.FC<{
             <Undo2 className="w-5 h-5" strokeWidth={2} />
           </button>
         )}
-        {herramientaBtn('recortar', Crop, 'Recortar y girar')}
+        {!capa && herramientaBtn('recortar', Crop, 'Recortar y girar')}
+        {userId && herramientaBtn('sticker', IconoSticker, 'Stickers')}
         {herramientaBtn('emoji', Smile, 'Emojis')}
         {herramientaBtn('texto', Type, 'Texto')}
         {herramientaBtn('dibujar', Pencil, 'Dibujar')}
@@ -590,48 +621,49 @@ export const EditorFoto: React.FC<{
               Recortar
             </button>
           </div>
-        ) : sel ? (
-          <div className="flex items-center justify-center gap-2">
-            {sel.tipo === 'texto' &&
-              COLORES.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setPegados((l) => l.map((p) => (p.id === sel.id ? { ...p, color: c } : p)))}
-                  className={`w-7 h-7 rounded-full border-2 ${sel.color === c ? 'border-white' : 'border-white/30'}`}
-                  style={{ background: c }}
-                  aria-label={`Color ${c}`}
-                />
-              ))}
-            {sel.tipo === 'texto' && (
-              <button
-                type="button"
-                onClick={() => setEscribiendo({ id: sel.id, texto: sel.valor, color: sel.color })}
-                className="h-9 px-3 rounded-full bg-white/15 text-xs"
-              >
-                Editar
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                setPegados((l) => l.filter((p) => p.id !== sel.id));
-                setElegido(null);
-              }}
-              className="w-9 h-9 rounded-full bg-[#E5484D] flex items-center justify-center"
-              aria-label="Quitar"
-            >
-              <Trash2 className="w-4 h-4" strokeWidth={2} />
-            </button>
-            <span className="text-[11px] text-white/70 ml-1">Arrastra · dos dedos para el tamaño</span>
-          </div>
         ) : (
-          <div className="flex items-center justify-end">
+          <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto">
+              {sel?.tipo === 'texto' &&
+                COLORES.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setPegados((l) => l.map((p) => (p.id === sel.id ? { ...p, color: c } : p)))}
+                    className={`w-7 h-7 shrink-0 rounded-full border-2 ${sel.color === c ? 'border-white' : 'border-white/30'}`}
+                    style={{ background: c }}
+                    aria-label={`Color ${c}`}
+                  />
+                ))}
+              {sel?.tipo === 'texto' && (
+                <button
+                  type="button"
+                  onClick={() => setEscribiendo({ id: sel.id, texto: sel.valor, color: sel.color })}
+                  className="h-9 px-3 shrink-0 rounded-full bg-white/15 text-xs"
+                >
+                  Editar
+                </button>
+              )}
+              {sel && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPegados((l) => l.filter((p) => p.id !== sel.id));
+                    setElegido(null);
+                  }}
+                  className="w-9 h-9 shrink-0 rounded-full bg-[#E5484D] flex items-center justify-center"
+                  aria-label="Quitar"
+                >
+                  <Trash2 className="w-4 h-4" strokeWidth={2} />
+                </button>
+              )}
+              {sel && sel.tipo !== 'texto' && <span className="text-[11px] text-white/70">Arrastra · dos dedos para el tamaño</span>}
+            </div>
             <button
               type="button"
               onClick={terminar}
               disabled={!tam.w}
-              className="h-12 px-5 rounded-full bg-[#F28C1B] text-[#1F2933] font-['Poppins'] font-semibold text-sm flex items-center gap-2"
+              className="h-12 px-5 shrink-0 rounded-full bg-[#F28C1B] text-[#1F2933] font-['Poppins'] font-semibold text-sm flex items-center gap-2"
             >
               <Check className="w-5 h-5" strokeWidth={2.5} /> Listo
             </button>
@@ -674,6 +706,11 @@ export const EditorFoto: React.FC<{
             ))}
           </div>
         </div>
+      )}
+
+      {/* Elegir sticker */}
+      {stickers && userId && (
+        <SelectorStickers userId={userId} miLlavePublica={miLlavePublica} onElegir={ponerSticker} onCerrar={() => setStickers(false)} />
       )}
 
       {/* Elegir emoji */}
