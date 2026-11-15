@@ -165,6 +165,9 @@ export class VoiceRecorder {
   private pcm: Float32Array[] = [];
   private sampleRate = 44100;
   private startedAt = 0;
+  // Pausa: el tiempo grabado antes de la pausa actual y si está en pausa
+  private acumulado = 0;
+  private pausada = false;
   // Para dibujar las barras de sonido mientras se graba
   private analyser: AnalyserNode | null = null;
   private muestras: Uint8Array<ArrayBuffer> | null = null;
@@ -205,7 +208,9 @@ export class VoiceRecorder {
     this.medirVolumen(src);
     this.processor = this.ctx.createScriptProcessor(4096, 1, 1);
     this.pcm = [];
-    this.processor.onaudioprocess = (e) => this.pcm.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    this.processor.onaudioprocess = (e) => {
+      if (!this.pausada) this.pcm.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
     src.connect(this.processor);
     this.processor.connect(this.ctx.destination);
   }
@@ -222,7 +227,7 @@ export class VoiceRecorder {
 
   /** Volumen actual de 0 a 1 (para las barras de sonido). */
   nivel(): number {
-    if (!this.analyser || !this.muestras) return 0;
+    if (this.pausada || !this.analyser || !this.muestras) return 0;
     this.analyser.getByteTimeDomainData(this.muestras);
     let suma = 0;
     for (const v of this.muestras) {
@@ -235,7 +240,36 @@ export class VoiceRecorder {
   }
 
   elapsed(): number {
-    return this.startedAt ? (Date.now() - this.startedAt) / 1000 : 0;
+    if (!this.startedAt) return 0;
+    return this.acumulado + (this.pausada ? 0 : (Date.now() - this.startedAt) / 1000);
+  }
+
+  get enPausa(): boolean {
+    return this.pausada;
+  }
+
+  /** Pausa la grabación (el micrófono sigue abierto para continuar enseguida). */
+  pause(): void {
+    if (this.pausada || !this.startedAt) return;
+    this.acumulado = this.elapsed();
+    this.pausada = true;
+    try {
+      if (this.recorder?.state === 'recording') this.recorder.pause();
+    } catch {
+      /* el plan B (WAV) simplemente deja de guardar sonido */
+    }
+  }
+
+  /** Sigue grabando después de una pausa, en el mismo audio. */
+  resume(): void {
+    if (!this.pausada) return;
+    this.startedAt = Date.now();
+    this.pausada = false;
+    try {
+      if (this.recorder?.state === 'paused') this.recorder.resume();
+    } catch {
+      /* nada */
+    }
   }
 
   private release() {

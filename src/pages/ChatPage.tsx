@@ -19,6 +19,7 @@ import {
   Reply,
   Pencil,
   Mic,
+  Pause,
   Trash2,
   Bell,
   BellOff,
@@ -311,6 +312,7 @@ export const ChatPage: React.FC = () => {
   } | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordViewOnce, setRecordViewOnce] = useState(false);
+  const [pausado, setPausado] = useState(false); // grabación con candado en pausa
   const recorderRef = useRef<VoiceRecorder | null>(null);
   // Mantener presionado para grabar (como WhatsApp): soltar = enviar, izquierda = cancelar, arriba = candado
   const [gesto, setGesto] = useState<'no' | 'mantener' | 'bloqueado'>('no');
@@ -1715,6 +1717,7 @@ export const ChatPage: React.FC = () => {
     }
     recorderRef.current = rec;
     setRecordViewOnce(false);
+    setPausado(false);
     setRecording(true);
     return true;
   };
@@ -1722,10 +1725,21 @@ export const ChatPage: React.FC = () => {
   const nivelMicrofono = useCallback(() => recorderRef.current?.nivel() ?? 0, []);
   const segundosGrabados = useCallback(() => recorderRef.current?.elapsed() ?? 0, []);
 
+  // Pausar y continuar la grabación con candado (sigue siendo el mismo audio)
+  const alternarPausa = () => {
+    const r = recorderRef.current;
+    if (!r) return;
+    if (r.enPausa) r.resume();
+    else r.pause();
+    setPausado(r.enPausa);
+    navigator.vibrate?.(10);
+  };
+
   const cancelRecording = () => {
     recorderRef.current?.cancel();
     recorderRef.current = null;
     setRecording(false);
+    setPausado(false);
     setGesto('no');
     pulsacion.current = null;
   };
@@ -1821,6 +1835,7 @@ export const ChatPage: React.FC = () => {
     if (!rec) return;
     recorderRef.current = null;
     setRecording(false);
+    setPausado(false);
     setGesto('no');
     pulsacion.current = null;
     const { blob, mime, duration } = await rec.stop();
@@ -2579,10 +2594,15 @@ export const ChatPage: React.FC = () => {
           /* Grabación con candado (como WhatsApp): arriba tiempo, sonido y "ver una vez"; abajo borrar y enviar */
           <div className="bg-white dark:bg-[#253240] rounded-[22px] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_1px_3px_rgba(0,0,0,0.08)] px-3 pt-2.5 pb-3">
             <div className="flex items-center gap-3 h-11">
-              <span className="w-12 shrink-0 text-[17px] font-['Inter'] tabular-nums text-[#1F2933] dark:text-white">
+              <span className="shrink-0 flex items-center gap-1.5 text-[17px] font-['Inter'] tabular-nums text-[#1F2933] dark:text-white">
+                {/* Punto rojo mientras graba; quieto y gris en pausa */}
+                <span
+                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${pausado ? 'bg-[#5B6670]/50' : 'bg-[#D64545] animate-pulse'}`}
+                  aria-hidden="true"
+                />
                 <TiempoGrabacion segundos={segundosGrabados} />
               </span>
-              <OndaEnVivo nivel={nivelMicrofono} className="flex-1 min-w-0 text-[#5B6670] dark:text-[#C9CFD6]" />
+              <OndaEnVivo nivel={nivelMicrofono} detenida={pausado} className="flex-1 min-w-0 text-[#5B6670] dark:text-[#C9CFD6]" />
               <button
                 type="button"
                 onClick={() => {
@@ -2608,10 +2628,28 @@ export const ChatPage: React.FC = () => {
               >
                 <Trash2 className="w-[22px] h-[22px]" strokeWidth={2} />
               </button>
-              <div className="flex-1 min-w-0 h-12 rounded-full bg-[#F2F4F7] dark:bg-[#1F2933] flex items-center justify-center gap-2 text-sm font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
-                <span className="truncate">Grabando · máx. 5 min</span>
-              </div>
+              {/* Pausar / continuar (como WhatsApp) */}
+              <button
+                type="button"
+                onClick={alternarPausa}
+                disabled={!recording}
+                className={`flex-1 min-w-0 h-12 rounded-full flex items-center justify-center gap-2 text-[15px] font-['Inter'] font-medium transition-colors disabled:opacity-60 ${
+                  pausado
+                    ? 'bg-[#FDEBD3] text-[#1F2933] dark:bg-[#F28C1B]/25 dark:text-white'
+                    : 'bg-[#F2F4F7] text-[#1F2933] dark:bg-[#1F2933] dark:text-white'
+                }`}
+                aria-label={pausado ? 'Continuar grabando' : 'Pausar la grabación'}
+              >
+                {pausado ? (
+                  <>
+                    <Mic className="w-5 h-5 shrink-0" strokeWidth={2} /> Continuar
+                  </>
+                ) : (
+                  <>
+                    <Pause className="w-5 h-5 shrink-0" fill="currentColor" strokeWidth={0} /> Pausar
+                  </>
+                )}
+              </button>
               <button
                 type="button"
                 onClick={() => {
