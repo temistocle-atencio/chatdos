@@ -240,4 +240,7 @@ const Pagina: React.FC = () => {
   );
 };
 
+// Si cambia el enlace (otro # en la misma pestaña), se vuelve a abrir
+window.addEventListener('hashchange', () => location.reload());
+
 createRoot(document.getElementById('root')!).render(<Pagina />);

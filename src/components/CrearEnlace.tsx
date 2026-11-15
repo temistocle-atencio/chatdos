@@ -10,8 +10,12 @@ const peso = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}
  * Crear un enlace para compartir fotos en calidad original con alguien que no tiene ChatDos.
  * Quien lo abre solo ve esas fotos (y las descarga); no necesita cuenta. Vence a los 7 días.
  */
-export const CrearEnlace: React.FC<{ delChat?: FotoDelChat[]; onCerrar: () => void }> = ({ delChat = [], onCerrar }) => {
-  const [nuevas, setNuevas] = useState<FotoNueva[]>([]);
+export const CrearEnlace: React.FC<{ delChat?: FotoDelChat[]; nuevasIniciales?: FotoNueva[]; onCerrar: () => void }> = ({
+  delChat = [],
+  nuevasIniciales = [],
+  onCerrar,
+}) => {
+  const [nuevas, setNuevas] = useState<FotoNueva[]>(nuevasIniciales);
   const [progreso, setProgreso] = useState<{ texto: string; pct: number } | null>(null);
   const [listo, setListo] = useState<{ url: string; vence: string } | null>(null);
   const [error, setError] = useState<string | null>(null);

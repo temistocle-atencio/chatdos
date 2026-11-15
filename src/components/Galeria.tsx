@@ -221,7 +221,7 @@ export const Galeria: React.FC<Props> = ({ items, inicio, autor, obtenerUrl, onD
                 <Download className="w-5 h-5" strokeWidth={2} />
                 {m.kind === 'video' ? 'Descargar video' : 'Descargar foto'}
               </button>
-              {onCompartirEnlace && m.payload?.media?.original && (
+              {onCompartirEnlace && m.kind === 'image' && (
                 <button
                   type="button"
                   onClick={() => {

@@ -110,7 +110,7 @@ import { AttachSheet, MediaComposer, type Calidad, type PendingMedia } from '../
 import { bajarOriginal, borrarOriginal, subirOriginal, type DatosOriginal } from '../lib/originales';
 import { ACEPTA_FOTOS_Y_VIDEOS } from '../lib/fotosOriginales';
 import { CrearEnlace } from '../components/CrearEnlace';
-import type { FotoDelChat } from '../lib/compartidos';
+import type { FotoDelChat, FotoNueva } from '../lib/compartidos';
 import {
   MAX_FILE_BYTES,
   MAX_VIDEO_SECONDS,
@@ -373,7 +373,7 @@ export const ChatPage: React.FC = () => {
   const [albumAbierto, setAlbumAbierto] = useState<string | null>(null); // id del primer mensaje del álbum
   const [multimediaOpen, setMultimediaOpen] = useState(false); // fotos, audios y enlaces del chat
   const [enviarExtra, setEnviarExtra] = useState<null | 'ubicacion' | 'contacto'>(null);
-  const [crearEnlaceCon, setCrearEnlaceCon] = useState<FotoDelChat[] | null>(null);
+  const [crearEnlaceCon, setCrearEnlaceCon] = useState<{ delChat: FotoDelChat[]; nuevas: FotoNueva[] } | null>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<DecryptedMessage[]>([]);
 
@@ -1870,18 +1870,26 @@ export const ChatPage: React.FC = () => {
 
   /** Enlace para compartir una foto enviada en Original con alguien que no tiene ChatDos */
   const compartirPorEnlace = async (m: DecryptedMessage) => {
-    const o = m.payload?.media?.original;
-    if (!o) return;
-    let previa: Blob | undefined;
+    const media = m.payload?.media;
+    if (!media) return;
+    const o = media.original;
+    let foto: Blob | undefined;
     try {
       const u = await urlDeMensaje(m);
-      if (u) previa = await (await fetch(u)).blob();
+      if (u) foto = await (await fetch(u)).blob();
     } catch {
       /* sin vista previa */
     }
-    setCrearEnlaceCon([
-      { ruta: o.ruta, key: o.key, mime: o.mime, size: o.size, nombre: nombreDescarga(o.mime, m.payload?.sentAt || m.created_at), previa },
-    ]);
+    const fecha = m.payload?.sentAt || m.created_at;
+    // Con original: se comparte la foto completa (no se vuelve a subir). Sin original: la que se ve en el chat.
+    if (o) {
+      setCrearEnlaceCon({
+        delChat: [{ ruta: o.ruta, key: o.key, mime: o.mime, size: o.size, nombre: nombreDescarga(o.mime, fecha), previa: foto }],
+        nuevas: [],
+      });
+    } else if (foto) {
+      setCrearEnlaceCon({ delChat: [], nuevas: [{ blob: foto, nombre: nombreDescarga(media.mime, fecha) }] });
+    } else setToast('No se pudo abrir la foto');
   };
 
   // ----- Reenviar -----
@@ -3479,7 +3487,7 @@ export const ChatPage: React.FC = () => {
           }}
           onEnlace={() => {
             setAttachOpen(false);
-            setCrearEnlaceCon([]);
+            setCrearEnlaceCon({ delChat: [], nuevas: [] });
           }}
           onAudioFile={() => {
             avisarSelectorArchivo();
@@ -3610,7 +3618,9 @@ export const ChatPage: React.FC = () => {
         </div>
       )}
 
-      {crearEnlaceCon && <CrearEnlace delChat={crearEnlaceCon} onCerrar={() => setCrearEnlaceCon(null)} />}
+      {crearEnlaceCon && (
+        <CrearEnlace delChat={crearEnlaceCon.delChat} nuevasIniciales={crearEnlaceCon.nuevas} onCerrar={() => setCrearEnlaceCon(null)} />
+      )}
 
       {enviarExtra === 'ubicacion' && (
         <EnviarUbicacion
