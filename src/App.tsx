@@ -9,6 +9,14 @@ import { ChatsPage } from './pages/ChatsPage';
 import { InvitarPage } from './pages/InvitarPage';
 import { InvitadoDetallePage } from './pages/InvitadoDetallePage';
 import { ChatPage } from './pages/ChatPage';
+import { useParams } from 'react-router-dom';
+
+// Cada chat abre su propia pantalla: así nunca se mezcla la llave de un chat con la de otro
+// (por ejemplo, al reenviar y saltar directo de un chat a otro).
+const ChatPorId: React.FC = () => {
+  const { chatId } = useParams();
+  return <ChatPage key={chatId} />;
+};
 import { PerfilPage } from './pages/PerfilPage';
 import { AjustesPage } from './pages/AjustesPage';
 import { CrearLlavePage } from './pages/CrearLlavePage';
@@ -146,7 +154,7 @@ export default function App() {
                 path="/chat/:chatId"
                 element={
                   <ProtectedRoute>
-                    <ChatPage />
+                    <ChatPorId />
                   </ProtectedRoute>
                 }
               />

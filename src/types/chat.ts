@@ -50,6 +50,10 @@ export interface MessagePayload {
     sitio?: string;
     imagen?: string; // miniatura en data:image/jpeg;base64
   };
+  // Fotos o videos enviados juntos: se muestran como un álbum (id común, cuántos son y cuál es este)
+  album?: { id: string; n: number; i: number };
+  // Mensaje reenviado (se marca "Reenviado" en la burbuja)
+  reenviado?: boolean;
   // Contacto enviado (tarjeta con nombre y números)
   contacto?: {
     nombre: string;

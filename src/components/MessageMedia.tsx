@@ -21,6 +21,8 @@ interface MessageMediaProps {
   /** Foto y nombre de quien envió (se muestran en las notas de voz) */
   autorAvatar?: string | null;
   autorNombre?: string;
+  /** Dentro de un álbum: la foto o el video llena su casilla (sin tamaño propio) */
+  mosaico?: boolean;
 }
 
 const KIND_LABEL = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' } as const;
@@ -49,6 +51,7 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
   onOpenViewOnce,
   autorAvatar = null,
   autorNombre = '',
+  mosaico = false,
 }) => {
   const media = message.payload?.media;
   const [url, setUrl] = useState<string | undefined>(() => getCachedUrl(message.id));
@@ -178,7 +181,7 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
 
   // ----- Foto -----
   if (kind === 'image') {
-    const size = boxSize(media?.width, media?.height);
+    const size = mosaico ? { width: '100%', height: '100%' } : boxSize(media?.width, media?.height);
     return (
       <button
         type="button"
@@ -215,7 +218,7 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
 
   // ----- Video -----
   if (kind === 'video') {
-    const size = boxSize(media?.width, media?.height);
+    const size = mosaico ? { width: '100%', height: '100%' } : boxSize(media?.width, media?.height);
     return (
       <button
         type="button"

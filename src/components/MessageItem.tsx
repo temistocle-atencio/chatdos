@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Clock, Lock, Ban, ChevronDown, Check, CheckCheck, Reply, Pin, Timer, Phone, Video, PhoneMissed } from 'lucide-react';
+import { Clock, Lock, Ban, ChevronDown, Check, CheckCheck, Reply, Pin, Timer, Phone, Video, PhoneMissed, Forward } from 'lucide-react';
 import { BurbujaContacto, BurbujaUbicacion } from './UbicacionYContacto';
 import { TarjetaEnlace } from './TarjetaEnlace';
 import { resaltarTexto } from './BuscarEnChat';
@@ -26,6 +26,7 @@ interface MessageItemProps {
   onDobleToque?: (message: DecryptedMessage) => void; // ❤️
   onLlamar?: (tipo: 'voz' | 'video') => void; // devolver una llamada desde el registro
   onDejarUbicacion?: (messageId: string) => void; // dejar de compartir la ubicación en tiempo real
+  onReenviar?: () => void; // botón redondo de reenviar al lado de fotos y videos (como WhatsApp)
 }
 
 // Tiempo que hay que dejar presionado el mensaje en el celular para abrir el menú
@@ -49,6 +50,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   onDobleToque,
   onLlamar,
   onDejarUbicacion,
+  onReenviar,
 }) => {
   const ultimoToque = useRef(0);
   const [corazon, setCorazon] = useState(false);
@@ -456,8 +458,38 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           </button>
         )}
 
+        {/* Reenviado */}
+        {message.payload?.reenviado && !isDeleted && (
+          <span
+            className={`flex items-center gap-1 mb-0.5 text-[12px] italic font-['Inter'] ${
+              isMine ? 'text-white/80' : 'text-[#5B6670] dark:text-[#E3E7EC]'
+            } ${esSticker ? 'px-1' : ''}`}
+          >
+            <Forward className="w-3.5 h-3.5" strokeWidth={2} /> Reenviado
+          </span>
+        )}
         {renderQuote()}
         {renderBody()}
+
+        {/* Reenviar rápido (fotos, videos y álbumes) */}
+        {onReenviar && !isDeleted && !message.isPending && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReenviar();
+            }}
+            onTouchStart={(e) => e.stopPropagation()}
+            onTouchEnd={(e) => e.stopPropagation()}
+            className={`absolute top-1/2 -translate-y-1/2 ${
+              isMine ? '-left-12' : '-right-12'
+            } w-9 h-9 rounded-full flex items-center justify-center bg-black/25 dark:bg-white/15 text-white`}
+            aria-label="Reenviar"
+            title="Reenviar"
+          >
+            <Forward className="w-[18px] h-[18px]" strokeWidth={2.25} />
+          </button>
+        )}
 
         {/* Corazón al dar doble toque */}
         {corazon && (
