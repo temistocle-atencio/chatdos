@@ -2,6 +2,7 @@
 // Hay varios cuidados para iPhone (Safari), porque la otra persona usa iPhone.
 import { supabase } from './supabase';
 import { encryptFile, decryptFile } from './crypto';
+import { esIOS } from './fotosOriginales';
 
 // ----- Límites -----
 export const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB (el bucket acepta 26 MB ya cifrado)
@@ -65,8 +66,53 @@ export interface PreparedImage {
   thumb: string;
 }
 
-export async function compressImage(file: File, hd = false): Promise<PreparedImage> {
+// Preparar la foto en segundo plano (Web Worker) para que los botones sigan respondiendo.
+// En iPhone se hace en la página (Safari no siempre gira bien las fotos en segundo plano), pero sin trabarla.
+let trabajador: Worker | null | undefined;
+let siguiente = 0;
+const esperando = new Map<number, { ok: (r: PreparedImage) => void; mal: (e: Error) => void }>();
+
+function obtenerTrabajador(): Worker | null {
+  if (trabajador !== undefined) return trabajador;
+  trabajador = null;
+  if (esIOS || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return null;
+  try {
+    const w = new Worker(new URL('./compresor.worker.ts', import.meta.url), { type: 'module' });
+    w.onmessage = (e: MessageEvent<{ id: number; ok: boolean; error?: string } & PreparedImage>) => {
+      const p = esperando.get(e.data.id);
+      if (!p) return;
+      esperando.delete(e.data.id);
+      if (e.data.ok) p.ok({ blob: e.data.blob, mime: e.data.mime, width: e.data.width, height: e.data.height, thumb: e.data.thumb });
+      else p.mal(new Error(e.data.error || 'No se pudo preparar'));
+    };
+    w.onerror = () => {
+      for (const p of esperando.values()) p.mal(new Error('No se pudo preparar'));
+      esperando.clear();
+      trabajador = null;
+    };
+    trabajador = w;
+  } catch {
+    trabajador = null;
+  }
+  return trabajador;
+}
+
+function enSegundoPlano(file: Blob, lado: number, calidad: number): Promise<PreparedImage> | null {
+  const w = obtenerTrabajador();
+  if (!w) return null;
+  const id = ++siguiente;
+  return new Promise((ok, mal) => {
+    esperando.set(id, { ok, mal });
+    w.postMessage({ id, blob: file, lado, calidad });
+  });
+}
+
+/** Deja respirar a la pantalla (para que el toque se vea al instante antes de un trabajo pesado) */
+export const respirar = () => new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+
+async function comprimirAqui(file: File, hd: boolean): Promise<PreparedImage> {
   const img = await loadImage(file); // el navegador ya respeta la orientación de la foto
+  await img.decode?.().catch(() => {}); // abrir la foto sin trabar la pantalla
   const w0 = img.naturalWidth;
   const h0 = img.naturalHeight;
   const scale = Math.min(1, (hd ? IMAGE_MAX_SIDE_HD : IMAGE_MAX_SIDE) / Math.max(w0, h0));
@@ -79,10 +125,23 @@ export async function compressImage(file: File, hd = false): Promise<PreparedIma
   if (!ctx) throw new Error('No se pudo comprimir la foto');
   ctx.drawImage(img, 0, 0, width, height);
   const blob = await canvasToBlob(canvas, hd ? 0.92 : 0.8);
-  const thumb = makeThumb(img, width, height);
+  const thumb = makeThumb(canvas, width, height);
   URL.revokeObjectURL(img.src);
   canvas.width = canvas.height = 0; // liberar memoria (importante en iPhone)
   return { blob, mime: blob.type, width, height, thumb };
+}
+
+export async function compressImage(file: File, hd = false): Promise<PreparedImage> {
+  const fondo = enSegundoPlano(file, hd ? IMAGE_MAX_SIDE_HD : IMAGE_MAX_SIDE, hd ? 0.92 : 0.8);
+  if (fondo) {
+    try {
+      return await fondo;
+    } catch {
+      /* si falla en segundo plano, se intenta en la página */
+    }
+  }
+  await respirar();
+  return comprimirAqui(file, hd);
 }
 
 // ----- Videos -----
