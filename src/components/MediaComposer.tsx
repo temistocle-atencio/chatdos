@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Send, Image as ImageIcon, Camera, Music, Eye, EyeOff, Video, Play } from 'lucide-react';
+import { X, Send, Image as ImageIcon, Camera, Music, Eye, EyeOff, Play } from 'lucide-react';
 import { formatBytes, formatDuration } from '../lib/media';
 
 // Archivo listo para enviar (ya comprimido o revisado)
@@ -21,7 +21,7 @@ export const AttachSheet: React.FC<{
   onClose: () => void;
   onGallery: () => void;
   onCamera: () => void;
-  onVideoCamera: () => void;
+  onVideoCamera?: () => void;
   onAudioFile: () => void;
 }> = ({ onClose, onGallery, onCamera, onVideoCamera, onAudioFile }) => {
   const item = (icon: React.ReactNode, color: string, label: string, onClick: () => void) => (
@@ -47,10 +47,9 @@ export const AttachSheet: React.FC<{
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mb-4 w-10 h-1 rounded-full bg-[#C9CFD6] dark:bg-[#5B6670]" aria-hidden="true" />
-        <div className="grid grid-cols-4 gap-y-4">
+        <div className="grid grid-cols-3 gap-y-4">
           {item(<ImageIcon className="w-6 h-6" strokeWidth={2} />, '#005198', 'Galería', onGallery)}
           {item(<Camera className="w-6 h-6" strokeWidth={2} />, '#F28C1B', 'Cámara', onCamera)}
-          {item(<Video className="w-6 h-6" strokeWidth={2} />, '#003A73', 'Video', onVideoCamera)}
           {item(<Music className="w-6 h-6" strokeWidth={2} />, '#D46A00', 'Audio', onAudioFile)}
         </div>
       </div>
