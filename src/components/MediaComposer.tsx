@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { X, Send, Image as ImageIcon, Camera, Music, Eye, EyeOff, Play } from 'lucide-react';
-import { formatBytes, formatDuration } from '../lib/media';
+import { X, Send, Music, Eye, EyeOff, Play, Crop, Smile, Type, Pencil, Scissors, Loader2 } from 'lucide-react';
+import { compressImage, formatBytes, formatDuration, inspectVideo } from '../lib/media';
+import { EditorFoto, type HerramientaFoto } from './EditorFoto';
+import { EditorVideo } from './EditorVideo';
 import { IconoCamaraColor, IconoContactoColor, IconoGaleriaColor, IconoUbicacionColor } from './Iconos';
 
 // Archivo listo para enviar (ya comprimido o revisado)
@@ -62,17 +64,22 @@ export const AttachSheet: React.FC<{
   );
 };
 
-// Vista previa antes de enviar (una o varias fotos / videos)
+// Vista previa antes de enviar (una o varias fotos / videos), con editor como en WhatsApp
 export const MediaComposer: React.FC<{
   medias: PendingMedia[];
   onCancel: () => void;
   onRemove: (index: number) => void;
   onSend: (opts: { caption: string; viewOnce: boolean }) => void;
-}> = ({ medias, onCancel, onRemove, onSend }) => {
+  /** Reemplaza un archivo por su versión editada */
+  onCambiar?: (index: number, m: PendingMedia) => void;
+}> = ({ medias, onCancel, onRemove, onSend, onCambiar }) => {
   const [caption, setCaption] = useState('');
   const [viewOnce, setViewOnce] = useState(false);
   const [actual, setActual] = useState(0);
   const [urls, setUrls] = useState<string[]>([]);
+  const [editarFoto, setEditarFoto] = useState<HerramientaFoto | null>(null);
+  const [editarVideo, setEditarVideo] = useState(false);
+  const [preparando, setPreparando] = useState(false);
 
   useEffect(() => {
     const us = medias.map((m) => URL.createObjectURL(m.blob));
@@ -84,29 +91,77 @@ export const MediaComposer: React.FC<{
     if (actual > medias.length - 1) setActual(Math.max(0, medias.length - 1));
   }, [medias.length, actual]);
 
-  const media = medias[Math.min(actual, medias.length - 1)];
-  const url = urls[Math.min(actual, urls.length - 1)];
+  const indice = Math.min(actual, medias.length - 1);
+  const media = medias[indice];
+  const url = urls[indice];
   if (!media) return null;
   const varios = medias.length > 1;
-  const fotos = medias.filter((m) => m.kind === 'image').length;
-  const title = varios
-    ? `Enviar ${medias.length} ${fotos === medias.length ? 'fotos' : 'archivos'}`
-    : media.kind === 'image' ? 'Enviar foto' : media.kind === 'video' ? 'Enviar video' : 'Enviar audio';
+  const sePuedeEditar = !!onCambiar && !media.sticker;
+
+  const fotoEditada = async (b: Blob) => {
+    setEditarFoto(null);
+    setPreparando(true);
+    try {
+      const img = await compressImage(new File([b], 'foto.jpg', { type: b.type || 'image/jpeg' }));
+      onCambiar?.(indice, { kind: 'image', blob: img.blob, mime: img.mime, width: img.width, height: img.height, thumb: img.thumb });
+    } finally {
+      setPreparando(false);
+    }
+  };
+
+  const videoEditado = async (r: { blob: Blob; duracion: number }) => {
+    setEditarVideo(false);
+    setPreparando(true);
+    try {
+      const info = await inspectVideo(r.blob);
+      const duration = Number.isFinite(info.duration) && info.duration > 0 ? info.duration : r.duracion;
+      onCambiar?.(indice, { kind: 'video', blob: r.blob, mime: r.blob.type || 'video/webm', ...info, duration });
+    } finally {
+      setPreparando(false);
+    }
+  };
+
+  const boton = (etiqueta: string, alTocar: () => void, hijo: React.ReactNode) => (
+    <button
+      type="button"
+      onClick={alTocar}
+      className="w-11 h-11 rounded-full bg-black/45 text-white flex items-center justify-center"
+      aria-label={etiqueta}
+      title={etiqueta}
+    >
+      {hijo}
+    </button>
+  );
 
   return (
     <div
-      className="fixed inset-0 z-[60] bg-[#1F2933] flex flex-col"
+      className="fixed inset-0 z-[60] bg-black flex flex-col"
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      <div className="flex items-center gap-2 px-2 h-14 shrink-0 bg-[#003A73] text-white">
-        <button type="button" onClick={onCancel} className="w-12 h-12 flex items-center justify-center" aria-label="Cancelar">
-          <X className="w-6 h-6" strokeWidth={2} />
-        </button>
-        <span className="font-['Poppins'] font-semibold text-base">{title}</span>
+      {/* Arriba: cerrar y herramientas */}
+      <div className="flex items-center gap-2 px-3 pt-2.5 pb-2 shrink-0 text-white">
+        {boton('Cancelar', onCancel, <X className="w-6 h-6" strokeWidth={2} />)}
+        <div className="flex-1" />
+        {sePuedeEditar && media.kind === 'image' && (
+          <>
+            {boton('Recortar y girar', () => setEditarFoto('recortar'), <Crop className="w-5 h-5" strokeWidth={2} />)}
+            {boton('Emojis', () => setEditarFoto('emoji'), <Smile className="w-5 h-5" strokeWidth={2} />)}
+            {boton('Texto', () => setEditarFoto('texto'), <Type className="w-5 h-5" strokeWidth={2} />)}
+            {boton('Dibujar', () => setEditarFoto('dibujar'), <Pencil className="w-5 h-5" strokeWidth={2} />)}
+          </>
+        )}
+        {sePuedeEditar && media.kind === 'video' && boton('Recortar o quitar el sonido', () => setEditarVideo(true), <Scissors className="w-5 h-5" strokeWidth={2} />)}
       </div>
 
-      <div className="flex-1 min-h-0 flex items-center justify-center p-3">
-        {url && media.kind === 'image' && <img src={url} alt="Vista previa" className="max-w-full max-h-full object-contain" />}
+      <div className="relative flex-1 min-h-0 flex items-center justify-center p-1">
+        {url && media.kind === 'image' && (
+          <img
+            src={url}
+            alt="Vista previa"
+            className="max-w-full max-h-full object-contain"
+            onClick={() => sePuedeEditar && setEditarFoto('dibujar')}
+          />
+        )}
         {url && media.kind === 'video' && (
           <div className="relative max-w-full max-h-full flex items-center justify-center">
             <video key={url} src={url} controls playsInline className="max-w-full max-h-[calc(100dvh-220px)]" />
@@ -127,6 +182,11 @@ export const MediaComposer: React.FC<{
             </p>
           </div>
         )}
+        {preparando && (
+          <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white text-sm font-['Inter'] gap-2">
+            <Loader2 className="w-5 h-5 animate-spin" strokeWidth={2} /> Guardando los cambios…
+          </div>
+        )}
       </div>
 
       {varios && (
@@ -137,14 +197,14 @@ export const MediaComposer: React.FC<{
                 type="button"
                 onClick={() => setActual(i)}
                 className={`block w-14 h-14 rounded-[5px] overflow-hidden transition-opacity ${
-                  i === actual ? 'ring-2 ring-[#F28C1B] ring-offset-2 ring-offset-[#1F2933]' : 'opacity-60'
+                  i === actual ? 'ring-2 ring-[#F28C1B] ring-offset-2 ring-offset-black' : 'opacity-60'
                 }`}
                 aria-label={`Ver archivo ${i + 1}`}
               >
                 {m.kind === 'image' && urls[i] ? (
                   <img src={urls[i]} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  <span className="w-full h-full flex items-center justify-center bg-black text-white">
+                  <span className="w-full h-full flex items-center justify-center bg-[#1F2933] text-white">
                     <Play className="w-5 h-5" strokeWidth={2} />
                   </span>
                 )}
@@ -162,17 +222,20 @@ export const MediaComposer: React.FC<{
         </div>
       )}
 
-      <div className="shrink-0 p-2 flex items-end gap-2 bg-[#1F2933]">
+      {/* Abajo: comentario, ver una vez y enviar */}
+      <div className="shrink-0 px-2 pt-1 pb-2 flex items-end gap-2">
         {!viewOnce && media.kind !== 'audio' ? (
-          <input
-            type="text"
-            value={caption}
-            onChange={(e) => setCaption(e.target.value.slice(0, 1000))}
-            placeholder={varios ? 'Comentario para la primera foto…' : 'Añade un comentario…'}
-            className="flex-1 min-w-0 h-12 px-3 rounded-[5px] bg-white dark:bg-[#253240] text-[16px] font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#E3E7EC] border border-[#C9CFD6] dark:border-[#003A73] focus:outline-2 focus:outline-[#005198]"
-          />
+          <div className="flex-1 min-w-0 h-12 flex items-center rounded-full bg-[#1F2933] px-1">
+            <input
+              type="text"
+              value={caption}
+              onChange={(e) => setCaption(e.target.value.slice(0, 1000))}
+              placeholder={varios ? 'Comentario para la primera foto…' : 'Añade un comentario…'}
+              className="flex-1 min-w-0 h-full px-3 bg-transparent text-[16px] font-['Inter'] text-white placeholder-white/60 focus:outline-none"
+            />
+          </div>
         ) : (
-          <p className="flex-1 min-h-12 flex items-center px-1 text-xs font-['Inter'] text-[#E3E7EC]">
+          <p className="flex-1 min-h-12 flex items-center px-2 text-xs font-['Inter'] text-[#E3E7EC]">
             {viewOnce
               ? varios
                 ? 'Cada una se podrá abrir una sola vez. Después se borra para los dos.'
@@ -184,7 +247,7 @@ export const MediaComposer: React.FC<{
           <button
             type="button"
             onClick={() => setViewOnce((v) => !v)}
-            className={`w-12 h-12 shrink-0 flex flex-col items-center justify-center rounded-[5px] border ${
+            className={`w-12 h-12 shrink-0 flex flex-col items-center justify-center rounded-full border ${
               viewOnce ? 'bg-white text-[#005198] border-white' : 'text-white border-white/40'
             }`}
             aria-pressed={viewOnce}
@@ -197,12 +260,25 @@ export const MediaComposer: React.FC<{
         <button
           type="button"
           onClick={() => onSend({ caption: caption.trim(), viewOnce })}
-          className="w-12 h-12 shrink-0 flex items-center justify-center rounded-[5px] bg-[#F28C1B] text-[#1F2933]"
+          disabled={preparando}
+          className="w-12 h-12 shrink-0 flex items-center justify-center rounded-full bg-[#F28C1B] text-[#1F2933] disabled:opacity-50"
           aria-label="Enviar"
         >
           <Send className="w-5 h-5" strokeWidth={2} />
         </button>
       </div>
+
+      {editarFoto && (
+        <EditorFoto imagen={media.blob} herramienta={editarFoto} onCancelar={() => setEditarFoto(null)} onListo={(b) => void fotoEditada(b)} />
+      )}
+      {editarVideo && (
+        <EditorVideo
+          video={media.blob}
+          duracion={media.duration || 0}
+          onCancelar={() => setEditarVideo(false)}
+          onListo={(r) => void videoEditado(r)}
+        />
+      )}
     </div>
   );
 };
