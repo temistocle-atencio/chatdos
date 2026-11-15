@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Search, Forward } from 'lucide-react';
+import { X, Search, Send, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { memoria } from '../lib/memoria';
 import { useAtras } from '../lib/atras';
@@ -13,13 +13,21 @@ interface Fila {
   partner: Profile;
 }
 
+export interface DestinoReenvio {
+  chat_id: string;
+  partner: Profile;
+}
+
+/** Se pueden marcar varios chats; "Enviar" reenvía a todos. */
 export const ReenviarA: React.FC<{
   userId: string;
   chatActual: string;
   cuantos: number;
-  onElegir: (chatId: string) => void;
+  onEnviar: (destinos: DestinoReenvio[]) => void;
   onCerrar: () => void;
-}> = ({ userId, chatActual, cuantos, onElegir, onCerrar }) => {
+}> = ({ userId, chatActual, cuantos, onEnviar, onCerrar }) => {
+  const [marcados, setMarcados] = useState<string[]>([]);
+  const alternar = (id: string) => setMarcados((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
   useAtras(true, onCerrar);
   const [filas, setFilas] = useState<Fila[]>(() => (memoria.listas.get(userId) as Fila[] | undefined) ?? []);
   const [buscar, setBuscar] = useState('');
@@ -58,7 +66,8 @@ export const ReenviarA: React.FC<{
           <div>
             <h2 className="text-base font-['Poppins'] font-semibold text-[#005198] dark:text-white">Reenviar a…</h2>
             <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">
-              {cuantos === 1 ? '1 mensaje' : `${cuantos} fotos y videos`}
+              {cuantos === 1 ? '1 mensaje' : `${cuantos} mensajes`}
+              {marcados.length > 0 && ` · ${marcados.length === 1 ? '1 chat' : `${marcados.length} chats`}`}
             </p>
           </div>
           <button type="button" onClick={onCerrar} className="w-9 h-9 flex items-center justify-center text-[#5B6670] dark:text-[#E3E7EC]" aria-label="Cerrar">
@@ -81,12 +90,14 @@ export const ReenviarA: React.FC<{
           {lista.map((f) => {
             const nombre = f.partner.display_name || f.partner.username || 'Sin nombre';
             const sinLlave = !f.partner.public_key;
+            const marcado = marcados.includes(f.chat_id);
             return (
               <button
                 key={f.chat_id}
                 type="button"
                 disabled={sinLlave}
-                onClick={() => onElegir(f.chat_id)}
+                onClick={() => alternar(f.chat_id)}
+                aria-pressed={marcado}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-[#F2F4F7] dark:hover:bg-white/5 disabled:opacity-50"
               >
                 <AvatarImage avatarPath={f.partner.avatar_path} name={nombre} size={42} />
@@ -96,7 +107,15 @@ export const ReenviarA: React.FC<{
                     {sinLlave ? 'Aún no puede recibir mensajes' : f.chat_id === chatActual ? 'Este chat' : ''}
                   </span>
                 </span>
-                {!sinLlave && <Forward className="w-5 h-5 shrink-0 text-[#005198] dark:text-white" strokeWidth={2} />}
+                {!sinLlave && (
+                  <span
+                    className={`w-6 h-6 shrink-0 rounded-full border-2 flex items-center justify-center ${
+                      marcado ? 'bg-[#005198] border-[#005198] text-white dark:bg-white dark:border-white dark:text-[#005198]' : 'border-[#C9CFD6] dark:border-[#5B6670]'
+                    }`}
+                  >
+                    {marcado && <Check className="w-4 h-4" strokeWidth={3} />}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -106,6 +125,26 @@ export const ReenviarA: React.FC<{
             </p>
           )}
         </div>
+        {/* Enviar a los chats marcados */}
+        {marcados.length > 0 && (
+          <div className="shrink-0 flex items-center gap-3 px-4 py-3 border-t border-[#E3E7EC] dark:border-[#003A73]">
+            <p className="flex-1 min-w-0 text-sm font-['Inter'] text-[#1F2933] dark:text-white truncate">
+              {marcados
+                .map((id) => filas.find((f) => f.chat_id === id))
+                .filter((f): f is Fila => !!f)
+                .map((f) => f.partner.display_name || f.partner.username)
+                .join(', ')}
+            </p>
+            <button
+              type="button"
+              onClick={() => onEnviar(filas.filter((f) => marcados.includes(f.chat_id)))}
+              className="w-12 h-12 shrink-0 rounded-full bg-[#F28C1B] text-[#1F2933] flex items-center justify-center shadow-[0_2px_8px_rgba(0,0,0,0.15)]"
+              aria-label="Reenviar a los chats marcados"
+            >
+              <Send className="w-5 h-5" strokeWidth={2} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ export const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB (el bucket acepta 26 MB
 export const MAX_VIDEO_SECONDS = 120; // 2 minutos
 export const MAX_AUDIO_SECONDS = 300; // 5 minutos grabando
 const IMAGE_MAX_SIDE = 1600;
+const IMAGE_MAX_SIDE_HD = 4096; // fotos en HD: casi el tamaño original y mejor calidad
 
 export const formatBytes = (n: number): string =>
   n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
@@ -64,11 +65,11 @@ export interface PreparedImage {
   thumb: string;
 }
 
-export async function compressImage(file: File): Promise<PreparedImage> {
+export async function compressImage(file: File, hd = false): Promise<PreparedImage> {
   const img = await loadImage(file); // el navegador ya respeta la orientación de la foto
   const w0 = img.naturalWidth;
   const h0 = img.naturalHeight;
-  const scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(w0, h0));
+  const scale = Math.min(1, (hd ? IMAGE_MAX_SIDE_HD : IMAGE_MAX_SIDE) / Math.max(w0, h0));
   const width = Math.round(w0 * scale);
   const height = Math.round(h0 * scale);
   const canvas = document.createElement('canvas');
@@ -77,7 +78,7 @@ export async function compressImage(file: File): Promise<PreparedImage> {
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('No se pudo comprimir la foto');
   ctx.drawImage(img, 0, 0, width, height);
-  const blob = await canvasToBlob(canvas, 0.8);
+  const blob = await canvasToBlob(canvas, hd ? 0.92 : 0.8);
   const thumb = makeThumb(img, width, height);
   URL.revokeObjectURL(img.src);
   canvas.width = canvas.height = 0; // liberar memoria (importante en iPhone)

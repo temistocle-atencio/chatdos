@@ -26,7 +26,17 @@ interface MessageItemProps {
   onDobleToque?: (message: DecryptedMessage) => void; // ❤️
   onLlamar?: (tipo: 'voz' | 'video') => void; // devolver una llamada desde el registro
   onDejarUbicacion?: (messageId: string) => void; // dejar de compartir la ubicación en tiempo real
-  onReenviar?: () => void; // botón redondo de reenviar al lado de fotos y videos (como WhatsApp)
+  onReenviar?: (message: DecryptedMessage) => void; // botón redondo de reenviar al lado de fotos y videos
+  reenviable?: boolean; // mostrar ese botón
+  /**
+   * Resumen de lo que cambia el contenido de `media` (subidas, fotos del álbum, foto de perfil…).
+   * La burbuja solo se vuelve a dibujar si cambia esto o algún dato del mensaje.
+   */
+  firma?: string;
+  /** Modo de selección de varios mensajes */
+  seleccionando?: boolean;
+  seleccionado?: boolean;
+  onAlternarSeleccion?: (message: DecryptedMessage) => void;
 }
 
 // Tiempo que hay que dejar presionado el mensaje en el celular para abrir el menú
@@ -51,6 +61,10 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   onLlamar,
   onDejarUbicacion,
   onReenviar,
+  reenviable = false,
+  seleccionando = false,
+  seleccionado = false,
+  onAlternarSeleccion,
 }) => {
   const ultimoToque = useRef(0);
   const [corazon, setCorazon] = useState(false);
@@ -392,8 +406,30 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   return (
     <div
       id={`msg-${message.id}`}
-      className={`flex flex-col w-full ${isMine ? 'items-end' : 'items-start'} ${isFirstInGroup ? 'mt-2' : 'mt-0.5'}`}
+      className={`relative flex flex-col w-full ${isMine ? 'items-end' : 'items-start'} ${isFirstInGroup ? 'mt-2' : 'mt-0.5'} ${
+        seleccionando ? `${isMine ? 'pr-0' : 'pl-8'} -mx-2 px-2 py-0.5 ${seleccionado ? 'bg-[#005198]/15 dark:bg-white/10' : ''}` : ''
+      }`}
+      // Los mensajes que están lejos de la pantalla no se pintan (el chat va fluido aunque sea largo)
+      style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 72px' }}
     >
+      {/* Modo selección: tocar el mensaje lo marca o desmarca */}
+      {seleccionando && (
+        <button
+          type="button"
+          onClick={() => onAlternarSeleccion?.(message)}
+          className="absolute inset-0 z-20 flex items-center pl-2"
+          aria-pressed={seleccionado}
+          aria-label={seleccionado ? 'Quitar de la selección' : 'Seleccionar este mensaje'}
+        >
+          <span
+            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+              seleccionado ? 'bg-[#005198] border-[#005198] text-white dark:bg-white dark:border-white dark:text-[#005198]' : 'border-[#5B6670] dark:border-[#E3E7EC] bg-white/70 dark:bg-black/20'
+            }`}
+          >
+            {seleccionado && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
+          </span>
+        </button>
+      )}
       <div
         onContextMenu={handleContextMenu}
         onDoubleClick={(e) => {
@@ -472,12 +508,12 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         {renderBody()}
 
         {/* Reenviar rápido (fotos, videos y álbumes) */}
-        {onReenviar && !isDeleted && !message.isPending && (
+        {onReenviar && reenviable && !seleccionando && !isDeleted && !message.isPending && (
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onReenviar();
+              onReenviar(message);
             }}
             onTouchStart={(e) => e.stopPropagation()}
             onTouchEnd={(e) => e.stopPropagation()}
@@ -529,3 +565,23 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     </div>
   );
 };
+
+// La burbuja solo se vuelve a dibujar si cambió algo que se ve. Las funciones que recibe
+// son estables (la pantalla del chat siempre llama a la versión más reciente), y lo que
+// cambia del archivo adjunto (`media`) va resumido en `firma`.
+const DATOS: (keyof MessageItemProps)[] = [
+  'message',
+  'isMine',
+  'myId',
+  'partnerName',
+  'reactions',
+  'highlighted',
+  'isFirstInGroup',
+  'busqueda',
+  'fijado',
+  'reenviable',
+  'firma',
+  'seleccionando',
+  'seleccionado',
+];
+export const MessageItemMemo = React.memo(MessageItem, (a, b) => DATOS.every((k) => a[k] === b[k]));
