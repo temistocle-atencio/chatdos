@@ -131,3 +131,35 @@ export const IconoUbicacionColor: React.FC<P> = ({ className }) => (
     <circle cx="24" cy="19" r="6.8" fill="#F8F9FA" />
   </svg>
 );
+
+/** Ver una vez: un "1" dentro de un círculo, media línea y media de puntos (toma el color del texto) */
+export const IconoVerUnaVez: React.FC<P> = ({ className }) => (
+  <svg viewBox="0 0 100 100" className={className} fill="none" aria-hidden="true">
+    <path d="M 44.57 11.38 A 39 39 0 1 0 44.57 88.62" stroke="currentColor" strokeWidth="7.6" strokeLinecap="round" />
+    <path d="M 40.8 32.5 H 49.5 V 67.5" stroke="currentColor" strokeWidth="7.6" strokeLinecap="round" strokeLinejoin="round" />
+    <g fill="currentColor">
+      <circle cx="54.08" cy="11.21" r="3.8" />
+      <circle cx="65.11" cy="14.05" r="3.8" />
+      <circle cx="74.86" cy="19.95" r="3.8" />
+      <circle cx="82.48" cy="28.42" r="3.8" />
+      <circle cx="87.33" cy="38.73" r="3.8" />
+      <circle cx="89" cy="50" r="3.8" />
+      <circle cx="87.33" cy="61.27" r="3.8" />
+      <circle cx="82.48" cy="71.58" r="3.8" />
+      <circle cx="74.86" cy="80.05" r="3.8" />
+      <circle cx="65.11" cy="85.95" r="3.8" />
+      <circle cx="54.08" cy="88.79" r="3.8" />
+    </g>
+  </svg>
+);
+
+/** Ver una vez, activado: círculo lleno con el "1" calado */
+export const IconoVerUnaVezActivo: React.FC<P> = ({ className }) => (
+  <svg viewBox="0 0 100 100" className={className} aria-hidden="true">
+    <mask id="chatdos-ver-una-vez">
+      <rect width="100" height="100" fill="white" />
+      <path d="M 40.8 32.5 H 49.5 V 67.5" fill="none" stroke="black" strokeWidth="7.6" strokeLinecap="round" strokeLinejoin="round" />
+    </mask>
+    <circle cx="50" cy="50" r="42.8" fill="currentColor" mask="url(#chatdos-ver-una-vez)" />
+  </svg>
+);

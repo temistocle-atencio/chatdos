@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
 import { claveLlave, memoria } from '../lib/memoria';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useAtras } from '../lib/atras';
 import {
   ChevronLeft,
   Send,
@@ -19,8 +20,6 @@ import {
   Pencil,
   Mic,
   Trash2,
-  Eye,
-  EyeOff,
   Bell,
   BellOff,
   Keyboard,
@@ -54,7 +53,8 @@ import { EnviarContacto, EnviarUbicacion } from '../components/UbicacionYContact
 import { pedirVistaPrevia, primerEnlace, type VistaEnlace } from '../lib/enlaces';
 import { VistaPreviaEscribiendo } from '../components/TarjetaEnlace';
 import { cargarUbicacionesVivo, compartir, dejarDeCompartir, retomarEnChat, useCompartiendoEn } from '../lib/ubicacionVivo';
-import { IconoCamara, IconoClip, IconoStickerCara } from '../components/Iconos';
+import { IconoCamara, IconoClip, IconoStickerCara, IconoVerUnaVez, IconoVerUnaVezActivo } from '../components/Iconos';
+import OndaEnVivo from '../components/OndaEnVivo';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { FondoChat } from '../components/FondoChat';
@@ -318,9 +318,6 @@ export const ChatPage: React.FC = () => {
   const [arrastre, setArrastre] = useState({ x: 0, y: 0 });
   const pulsacion = useRef<{ id: number; x: number; y: number; t: number; soltado: boolean } | null>(null);
   const ignorarClick = useRef(false);
-  // Dedo que bloqueó o canceló la grabación y aún no se ha levantado: su "soltar"
-  // no debe enviar nada, pero después hay que volver a aceptar toques.
-  const dedoPendiente = useRef<number | null>(null);
   const fotoVideoInputRef = useRef<HTMLInputElement>(null);
   const retryRef = useRef<Map<string, { media: PendingMedia; payload: MessagePayload; viewOnce: boolean; replyId: string | null; fileKey?: string }>>(new Map());
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -1677,6 +1674,27 @@ export const ChatPage: React.FC = () => {
     if (saved) uploadAndSave(messageId, saved.media, saved.payload, saved.viewOnce, saved.replyId);
   };
 
+  // ----- Botón atrás del celular -----
+  // Cierra el panel o la ventana que esté abierta (la de arriba) en vez de salir del chat.
+  useAtras(panel !== null, () => setPanel(null));
+  useAtras(attachOpen, () => setAttachOpen(false));
+  useAtras(headerMenuOpen, () => setHeaderMenuOpen(false));
+  useAtras(busqueda !== null, () => setBusqueda(null));
+  useAtras(!!actionMsg, () => setActionMsg(null));
+  useAtras(!!reactionPickerFor, () => setReactionPickerFor(null));
+  useAtras(!!viewer, () => closeViewer());
+  useAtras(!!pendingMedia, () => setPendingMedia(null));
+  useAtras(!!infoMsg, () => setInfoMsg(null));
+  useAtras(temporalesOpen, () => setTemporalesOpen(false));
+  useAtras(fondoOpen, () => setFondoOpen(false));
+  useAtras(vaciarOpen, () => !vaciando && setVaciarOpen(false));
+  useAtras(silencioOpen, () => setSilencioOpen(false));
+  useAtras(showSecurityModal, () => setShowSecurityModal(false));
+  useAtras(enviarExtra !== null, () => setEnviarExtra(null));
+  useAtras(!!editorSticker, () => setEditorSticker(null));
+  useAtras(!!pegada, () => setPegada(null));
+  useAtras(!!confirmDeleteAll, () => setConfirmDeleteAll(null));
+
   // ----- Notas de voz -----
   const startRecording = async (): Promise<boolean> => {
     if (recording || recorderRef.current) return false;
@@ -1694,6 +1712,8 @@ export const ChatPage: React.FC = () => {
     setRecording(true);
     return true;
   };
+
+  const nivelMicrofono = useCallback(() => recorderRef.current?.nivel() ?? 0, []);
 
   const cancelRecording = () => {
     recorderRef.current?.cancel();
@@ -1726,14 +1746,28 @@ export const ChatPage: React.FC = () => {
     }
   };
 
+  // El dedo que bloqueó o canceló la grabación sigue en la pantalla: su "soltar" no debe
+  // enviar nada, pero después hay que volver a aceptar toques. Se escucha en toda la
+  // ventana porque al bloquear el botón del micrófono cambia por el panel de grabación.
+  const esperarSoltar = (id: number) => {
+    ignorarClick.current = true;
+    const fin = (ev: PointerEvent) => {
+      if (ev.pointerId !== id) return;
+      window.removeEventListener('pointerup', fin, true);
+      window.removeEventListener('pointercancel', fin, true);
+      setTimeout(() => (ignorarClick.current = false), 400);
+    };
+    window.addEventListener('pointerup', fin, true);
+    window.addEventListener('pointercancel', fin, true);
+  };
+
   const alMoverMic = (e: React.PointerEvent<HTMLButtonElement>) => {
     const p = pulsacion.current;
     if (!p || p.id !== e.pointerId || gesto !== 'mantener') return;
     const dx = Math.min(0, e.clientX - p.x);
     const dy = Math.min(0, e.clientY - p.y);
     if (dx < -110) {
-      dedoPendiente.current = p.id;
-      ignorarClick.current = true;
+      esperarSoltar(p.id);
       cancelRecording();
       navigator.vibrate?.(15);
       return;
@@ -1742,8 +1776,7 @@ export const ChatPage: React.FC = () => {
       setGesto('bloqueado');
       setArrastre({ x: 0, y: 0 });
       pulsacion.current = null;
-      dedoPendiente.current = p.id;
-      ignorarClick.current = true;
+      esperarSoltar(p.id);
       navigator.vibrate?.(15);
       return;
     }
@@ -1751,13 +1784,6 @@ export const ChatPage: React.FC = () => {
   };
 
   const alSoltarMic = (e: React.PointerEvent<HTMLButtonElement>) => {
-    // Se levantó el dedo que bloqueó o canceló: se ignora este toque y se vuelve a
-    // aceptar el siguiente (si no, el botón "Enviar audio" quedaba sin responder).
-    if (dedoPendiente.current === e.pointerId) {
-      dedoPendiente.current = null;
-      setTimeout(() => (ignorarClick.current = false), 400);
-      return;
-    }
     const p = pulsacion.current;
     if (!p || p.id !== e.pointerId) return;
     ignorarClick.current = true;
@@ -2447,6 +2473,8 @@ export const ChatPage: React.FC = () => {
                           onRetry={retryUpload}
                           onOpenMedia={(url, kind) => setViewer({ url, kind })}
                           onOpenViewOnce={openViewOnce}
+                          autorAvatar={isMine ? myProfile?.avatar_path : partner?.avatar_path}
+                          autorNombre={isMine ? myProfile?.display_name || myProfile?.username : partnerName}
                         />
                       ) : undefined
                     }
@@ -2532,6 +2560,58 @@ export const ChatPage: React.FC = () => {
             </button>
           </div>
         )}
+        {recording && gesto !== 'mantener' ? (
+          /* Grabación con candado (como WhatsApp): arriba tiempo, sonido y "ver una vez"; abajo borrar y enviar */
+          <div className="bg-white dark:bg-[#253240] rounded-[22px] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_1px_3px_rgba(0,0,0,0.08)] px-3 pt-2.5 pb-3">
+            <div className="flex items-center gap-3 h-11">
+              <span className="w-12 shrink-0 text-[17px] font-['Inter'] tabular-nums text-[#1F2933] dark:text-white">
+                {formatDuration(recordSeconds)}
+              </span>
+              <OndaEnVivo nivel={nivelMicrofono} className="flex-1 min-w-0 text-[#5B6670] dark:text-[#C9CFD6]" />
+              <button
+                type="button"
+                onClick={() => {
+                  const v = !recordViewOnce;
+                  setRecordViewOnce(v);
+                  if (v) setToast('La nota de voz se podrá escuchar una sola vez');
+                }}
+                className="w-11 h-11 shrink-0 flex items-center justify-center rounded-full text-[#1F2933] dark:text-white"
+                aria-pressed={recordViewOnce}
+                aria-label="Escuchar una sola vez"
+                title="Escuchar una sola vez"
+              >
+                {recordViewOnce ? <IconoVerUnaVezActivo className="w-7 h-7" /> : <IconoVerUnaVez className="w-7 h-7" />}
+              </button>
+            </div>
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={cancelRecording}
+                className="w-12 h-12 shrink-0 rounded-full flex items-center justify-center bg-[#FDECEC] text-[#B03030] dark:bg-[#B03030]/25 dark:text-[#FDEBD3]"
+                title="Descartar audio"
+                aria-label="Descartar audio"
+              >
+                <Trash2 className="w-[22px] h-[22px]" strokeWidth={2} />
+              </button>
+              <div className="flex-1 min-w-0 h-12 rounded-full bg-[#F2F4F7] dark:bg-[#1F2933] flex items-center justify-center gap-2 text-sm font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
+                <span className="truncate">Grabando · máx. 5 min</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (ignorarClick.current) return;
+                  finishRecording();
+                }}
+                className="w-12 h-12 shrink-0 rounded-full flex items-center justify-center bg-[#F28C1B] text-[#1F2933] shadow-[0_2px_8px_rgba(0,0,0,0.15)] hover:brightness-105 active:scale-95 transition-transform"
+                title="Enviar audio"
+                aria-label="Enviar audio"
+              >
+                <Send className="w-[22px] h-[22px]" strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="flex items-end gap-1.5">
           {/* Cápsula: expresiones · texto · adjuntar · cámara (como WhatsApp) */}
           <div className="flex-1 min-w-0 flex items-end bg-white dark:bg-[#253240] rounded-[22px] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_1px_3px_rgba(0,0,0,0.08)] px-1 min-h-11 overflow-hidden">
@@ -2541,45 +2621,18 @@ export const ChatPage: React.FC = () => {
                 <div className="flex-1 flex items-center gap-2 pl-3 h-11 text-sm font-['Inter'] text-[#1F2933] dark:text-white">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
                   <span className="tabular-nums">{formatDuration(recordSeconds)}</span>
+                  <OndaEnVivo
+                    nivel={nivelMicrofono}
+                    className="flex-1 min-w-0 text-[#5B6670] dark:text-[#C9CFD6]"
+                    style={{ opacity: Math.max(0, 1 + arrastre.x / 80) }}
+                  />
                   <span
-                    className="ml-auto mr-2 flex items-center gap-0.5 text-xs text-[#5B6670] dark:text-[#E3E7EC] whitespace-nowrap"
+                    className="mr-2 shrink-0 flex items-center gap-0.5 text-xs text-[#5B6670] dark:text-[#E3E7EC] whitespace-nowrap"
                     style={{ transform: `translateX(${arrastre.x * 0.6}px)`, opacity: Math.max(0.25, 1 + arrastre.x / 140) }}
                   >
                     <FlechaIzq className="w-4 h-4" strokeWidth={2} /> Desliza para cancelar
                   </span>
                 </div>
-              </>
-            ) : recording ? (
-              <>
-                {/* Grabación con candado: borrar, tiempo, escuchar una vez */}
-                <button
-                  type="button"
-                  onClick={cancelRecording}
-                  className="w-10 h-11 shrink-0 flex items-center justify-center text-[#B03030] dark:text-[#FDEBD3]"
-                  title="Descartar audio"
-                  aria-label="Descartar audio"
-                >
-                  <Trash2 className="w-5 h-5" strokeWidth={2} />
-                </button>
-                <div className="flex-1 flex items-center gap-2 px-1 h-11 text-sm font-['Inter'] text-[#1F2933] dark:text-white">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
-                  <span className="tabular-nums">{formatDuration(recordSeconds)}</span>
-                  <span className="text-xs text-[#5B6670] dark:text-[#E3E7EC] truncate">Grabando · máx. 5 min</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setRecordViewOnce((v) => !v)}
-                  className={`w-10 h-10 my-0.5 shrink-0 flex flex-col items-center justify-center rounded-full border ${
-                    recordViewOnce
-                      ? 'border-[#005198] text-[#005198] dark:border-white dark:text-white'
-                      : 'border-transparent text-[#5B6670] dark:text-[#E3E7EC]'
-                  }`}
-                  aria-pressed={recordViewOnce}
-                  title="Escuchar una sola vez"
-                >
-                  {recordViewOnce ? <Eye className="w-4 h-4" strokeWidth={2} /> : <EyeOff className="w-4 h-4" strokeWidth={2} />}
-                  <span className="text-[9px] font-['Inter'] font-semibold leading-none mt-0.5">1 vez</span>
-                </button>
               </>
             ) : (
               <>
@@ -2711,6 +2764,7 @@ export const ChatPage: React.FC = () => {
             );
           })()}
         </div>
+        )}
 
         {/* Emojis y stickers en el lugar del teclado */}
         {panel && user && !recording && (

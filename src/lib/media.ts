@@ -165,6 +165,9 @@ export class VoiceRecorder {
   private pcm: Float32Array[] = [];
   private sampleRate = 44100;
   private startedAt = 0;
+  // Para dibujar las barras de sonido mientras se graba
+  private analyser: AnalyserNode | null = null;
+  private muestras: Uint8Array<ArrayBuffer> | null = null;
 
   static pickMime(): string {
     if (typeof MediaRecorder === 'undefined') return '';
@@ -180,23 +183,55 @@ export class VoiceRecorder {
     });
     this.startedAt = Date.now();
     this.mime = VoiceRecorder.pickMime();
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (this.mime) {
       this.recorder = new MediaRecorder(this.stream, { mimeType: this.mime, audioBitsPerSecond: 64000 });
       this.chunks = [];
       this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
       this.recorder.start(250);
+      // Solo para medir el volumen (si falla, se graba igual, sin barras)
+      try {
+        this.ctx = new AC();
+        this.medirVolumen(this.ctx.createMediaStreamSource(this.stream));
+      } catch {
+        this.ctx = null;
+      }
       return;
     }
     // Plan B: WAV con Web Audio
-    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     this.ctx = new AC();
     this.sampleRate = this.ctx.sampleRate;
     const src = this.ctx.createMediaStreamSource(this.stream);
+    this.medirVolumen(src);
     this.processor = this.ctx.createScriptProcessor(4096, 1, 1);
     this.pcm = [];
     this.processor.onaudioprocess = (e) => this.pcm.push(new Float32Array(e.inputBuffer.getChannelData(0)));
     src.connect(this.processor);
     this.processor.connect(this.ctx.destination);
+  }
+
+  private medirVolumen(src: MediaStreamAudioSourceNode) {
+    if (!this.ctx) return;
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 512;
+    this.muestras = new Uint8Array(new ArrayBuffer(this.analyser.fftSize));
+    src.connect(this.analyser);
+    // En iPhone el audio puede empezar en pausa si no viene directo de un toque
+    if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+  }
+
+  /** Volumen actual de 0 a 1 (para las barras de sonido). */
+  nivel(): number {
+    if (!this.analyser || !this.muestras) return 0;
+    this.analyser.getByteTimeDomainData(this.muestras);
+    let suma = 0;
+    for (const v of this.muestras) {
+      const x = (v - 128) / 128;
+      suma += x * x;
+    }
+    const rms = Math.sqrt(suma / this.muestras.length);
+    // La voz normal queda entre 0.02 y 0.3: se estira para que se note
+    return Math.min(1, Math.pow(rms * 4, 0.7));
   }
 
   elapsed(): number {
@@ -208,6 +243,9 @@ export class VoiceRecorder {
     this.stream = null;
     this.processor?.disconnect();
     this.processor = null;
+    this.analyser?.disconnect();
+    this.analyser = null;
+    this.muestras = null;
     this.ctx?.close().catch(() => {});
     this.ctx = null;
   }

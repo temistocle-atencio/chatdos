@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { X, Send, Music, Eye, EyeOff, Play, Crop, Smile, Type, Pencil, Scissors, Loader2 } from 'lucide-react';
+import { useAtras } from '../lib/atras';
+import { X, Send, Music, Play, Crop, Smile, Type, Pencil, Scissors, Loader2 } from 'lucide-react';
 import { compressImage, formatBytes, formatDuration, inspectVideo } from '../lib/media';
 import { EditorFoto, type HerramientaFoto } from './EditorFoto';
 import { EditorVideo } from './EditorVideo';
-import { IconoCamaraColor, IconoContactoColor, IconoGaleriaColor, IconoSticker, IconoUbicacionColor } from './Iconos';
+import { IconoCamaraColor, IconoContactoColor, IconoGaleriaColor, IconoSticker, IconoUbicacionColor, IconoVerUnaVez, IconoVerUnaVezActivo } from './Iconos';
 
 // Archivo listo para enviar (ya comprimido o revisado)
 export interface PendingMedia {
@@ -82,6 +83,9 @@ export const MediaComposer: React.FC<{
   const [editarFoto, setEditarFoto] = useState<HerramientaFoto | null>(null);
   const [editarVideo, setEditarVideo] = useState(false);
   const [preparando, setPreparando] = useState(false);
+  // Botón atrás: primero cierra el editor y vuelve a la vista previa
+  useAtras(!!editarFoto, () => setEditarFoto(null));
+  useAtras(editarVideo, () => setEditarVideo(false));
 
   useEffect(() => {
     const us = medias.map((m) => URL.createObjectURL(m.blob));
@@ -255,14 +259,11 @@ export const MediaComposer: React.FC<{
           <button
             type="button"
             onClick={() => setViewOnce((v) => !v)}
-            className={`w-12 h-12 shrink-0 flex flex-col items-center justify-center rounded-full border ${
-              viewOnce ? 'bg-white text-[#005198] border-white' : 'text-white border-white/40'
-            }`}
+            className="w-12 h-12 shrink-0 flex items-center justify-center rounded-full text-white"
             aria-pressed={viewOnce}
             title="Ver una vez"
           >
-            {viewOnce ? <Eye className="w-5 h-5" strokeWidth={2} /> : <EyeOff className="w-5 h-5" strokeWidth={2} />}
-            <span className="text-[9px] font-['Inter'] font-semibold leading-none mt-0.5">1 vez</span>
+            {viewOnce ? <IconoVerUnaVezActivo className="w-7 h-7" /> : <IconoVerUnaVez className="w-7 h-7" />}
           </button>
         )}
         <button
