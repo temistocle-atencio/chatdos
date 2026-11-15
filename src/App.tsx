@@ -19,6 +19,8 @@ import { AppLock } from './components/AppLock';
 import { AvisoClave } from './components/AvisoClave';
 import { RevisarLlave } from './components/RevisarLlave';
 import { InstalarIOS } from './components/InstalarIOS';
+import { Llamadas } from './components/Llamadas';
+import { AvisoNavegadorInterno } from './components/AvisoNavegadorInterno';
 import { Logo } from './components/Logo';
 import { hasLocalPrivateKey } from './lib/crypto';
 import { memoria } from './lib/memoria';
@@ -173,6 +175,8 @@ export default function App() {
           <AvisoClave />
           <RevisarLlave />
           <InstalarIOS />
+          <AvisoNavegadorInterno />
+          <Llamadas />
           <AppLock />
         </HashRouter>
       </AuthProvider>

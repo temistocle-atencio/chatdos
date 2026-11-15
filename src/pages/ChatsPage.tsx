@@ -79,6 +79,10 @@ async function vistaPrevia(
       return decryptJSONConRespaldo<MessagePayload>(llaveActual, viejas, msg.ciphertext, msg.iv);
     });
     const kindName = { image: 'Foto', video: 'Video', audio: 'Audio', text: '' }[msg.kind];
+    if (payload.llamada) {
+      const perdida = payload.llamada.estado !== 'completada';
+      return `${payload.llamada.tipo === 'video' ? '🎥 Videollamada' : '📞 Llamada'}${perdida ? ' perdida' : ''}`;
+    }
     if (payload.media?.sticker) return 'Sticker';
     return msg.view_once ? `${kindName} · ver una vez` : payload.text || (payload.media?.music ? 'Música' : kindName) || '';
   } catch {

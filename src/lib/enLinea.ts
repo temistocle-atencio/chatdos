@@ -12,6 +12,22 @@ let escuchandoVisibilidad = false;
 
 const avisar = () => avisos.forEach((f) => f());
 
+// Señales de llamadas: viajan por el mismo canal privado del chat (solo los dos miembros)
+type Senal = (chatId: string, payload: unknown) => void;
+const senales = new Set<Senal>();
+export function escucharSenales(f: Senal) {
+  senales.add(f);
+  return () => {
+    senales.delete(f);
+  };
+}
+export async function enviarSenal(chatId: string, payload: unknown): Promise<boolean> {
+  const c = canales.get(chatId);
+  if (!c) return false;
+  const r = await c.send({ type: 'broadcast', event: 'llamada', payload }).catch(() => 'error');
+  return r === 'ok';
+}
+
 function recalcular() {
   const antes = [...enLinea].sort().join();
   enLinea.clear();
@@ -58,6 +74,7 @@ export async function conectarEnLinea(userId: string, chatIds: string[]) {
     c.on('presence', { event: 'sync' }, recalcular)
       .on('presence', { event: 'join' }, recalcular)
       .on('presence', { event: 'leave' }, recalcular)
+      .on('broadcast', { event: 'llamada' }, ({ payload }) => senales.forEach((f) => f(chatId, payload)))
       .subscribe((estado) => {
         if (estado === 'SUBSCRIBED') marcar(c);
       });

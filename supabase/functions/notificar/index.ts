@@ -1,6 +1,7 @@
 // Edge Function "notificar"
 //   { accion: "clave" }                 -> devuelve la llave pública para suscribirse
 //   { accion: "enviar", message_id }    -> avisa a la otra persona que llegó un mensaje
+//   { accion: "llamada", chat_id, tipo } -> avisa a la otra persona que la están llamando
 // La notificación NUNCA lleva el texto del mensaje (está cifrado de extremo a extremo):
 // solo dice quién escribió y qué tipo de mensaje es.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -50,6 +51,35 @@ Deno.serve(async (req) => {
 
     if (cuerpo.accion === 'clave') {
       return responder({ publicKey: llaves.public_key });
+    }
+
+    // ---------- Llamada entrante ----------
+    if (cuerpo.accion === 'llamada') {
+      const chatId = String(cuerpo.chat_id ?? '');
+      const { data: miembros } = await servicio.from('chat_members').select('user_id').eq('chat_id', chatId);
+      if (!(miembros ?? []).some((m) => m.user_id === yo)) return responder({ error: 'Chat no válido' }, 400);
+      const destino = (miembros ?? []).map((m) => m.user_id).find((id) => id !== yo);
+      if (!destino) return responder({ ok: true, omitido: 'sin destino' });
+      const { data: perfil } = await servicio.from('profiles').select('display_name').eq('id', yo).maybeSingle();
+      const { data: subs } = await servicio.from('push_subscriptions').select('endpoint, p256dh, auth').eq('user_id', destino);
+      const payload = {
+        title: perfil?.display_name || 'ChatDos',
+        body: cuerpo.tipo === 'video' ? '🎥 Te está haciendo una videollamada' : '📞 Te está llamando',
+        url: `/chatdos/#/chat/${chatId}`,
+        tag: `llamada-${chatId}`,
+        llamada: true,
+      };
+      let enviadas = 0;
+      for (const s of subs ?? []) {
+        try {
+          const estado = await sendPush(s, payload, { publicKey: llaves.public_key, privateJwk: llaves.private_jwk, subject: SUBJECT });
+          if (estado === 404 || estado === 410) await servicio.from('push_subscriptions').delete().eq('endpoint', s.endpoint);
+          else if (estado < 300) enviadas++;
+        } catch (e) {
+          console.error('push error', e);
+        }
+      }
+      return responder({ ok: true, enviadas });
     }
 
     if (cuerpo.accion !== 'enviar') return responder({ error: 'Acción no válida' }, 400);

@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { Clock, AlertTriangle, Ban, ChevronDown, Check, CheckCheck, Reply } from 'lucide-react';
+import { Clock, Lock, Ban, ChevronDown, Check, CheckCheck, Reply, Pin, Timer, Phone, Video, PhoneMissed } from 'lucide-react';
+import { resaltarTexto } from './BuscarEnChat';
 import type { DecryptedMessage, Reaction } from '../types/chat';
 import { formatMessageTime, parseTextWithLinks } from '../lib/formatters';
 
@@ -18,6 +19,10 @@ interface MessageItemProps {
   media?: React.ReactNode;
   onQuoteClick: (messageId: string) => void;
   onReactionClick: (message: DecryptedMessage, emoji: string) => void;
+  busqueda?: string; // texto que se está buscando (se resalta)
+  fijado?: boolean;
+  onDobleToque?: (message: DecryptedMessage) => void; // ❤️
+  onLlamar?: (tipo: 'voz' | 'video') => void; // devolver una llamada desde el registro
 }
 
 // Tiempo que hay que dejar presionado el mensaje en el celular para abrir el menú
@@ -36,7 +41,20 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   media,
   onQuoteClick,
   onReactionClick,
+  busqueda = '',
+  fijado = false,
+  onDobleToque,
+  onLlamar,
 }) => {
+  const ultimoToque = useRef(0);
+  const [corazon, setCorazon] = useState(false);
+  const dobleToque = () => {
+    if (!onDobleToque || message.deleted_for_all || message.decryptionError) return;
+    navigator.vibrate?.(10);
+    setCorazon(true);
+    setTimeout(() => setCorazon(false), 700);
+    onDobleToque(message);
+  };
   const timeStr = formatMessageTime(message.payload?.sentAt || message.created_at || Date.now());
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDeleted = message.deleted_for_all;
@@ -83,6 +101,14 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   };
 
   const handleTouchEnd = () => {
+    // Doble toque rápido (sin deslizar ni dejar presionado) = ❤️
+    if (pressTimer.current && !swiping.current) {
+      const ahora = Date.now();
+      if (ahora - ultimoToque.current < 300) {
+        ultimoToque.current = 0;
+        dobleToque();
+      } else ultimoToque.current = ahora;
+    }
     clearPress();
     if (swiping.current && swipeX >= SWIPE_REPLY_PX && onSwipeReply) {
       navigator.vibrate?.(10);
@@ -139,6 +165,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
         isMine ? 'text-white/85' : 'text-[#5B6670] dark:text-[#E3E7EC]'
       }`}
     >
+      {fijado && !isDeleted && <Pin className="w-3 h-3 rotate-45" strokeWidth={2} aria-label="Fijado" />}
+      {message.expires_at && !isDeleted && <Timer className="w-3 h-3" strokeWidth={2} aria-label="Temporal" />}
       {message.edited_at && !isDeleted && <span className="italic">editado</span>}
       <span>{timeStr}</span>
       {renderStatus()}
@@ -198,15 +226,58 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
     if (message.decryptionError) {
       return (
-        <div className="flex items-center gap-1.5 text-xs italic py-1 text-[#B03030] dark:text-[#FDEBD3]">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
-          <span>No se pudo leer este mensaje</span>
+        <div className="flex items-center gap-1.5 text-xs italic py-1 text-[#5B6670] dark:text-[#E3E7EC]">
+          <Lock className="w-3.5 h-3.5 shrink-0" strokeWidth={2} />
+          <span>Mensaje de antes de un cambio de contraseña</span>
           <span className="flex-1">{metadata}</span>
         </div>
       );
     }
 
     const text = message.payload?.text || '';
+
+    // Registro de una llamada
+    const llamada = message.payload?.llamada;
+    if (llamada) {
+      const perdida = llamada.estado !== 'completada';
+      const Icono = perdida && !isMine ? PhoneMissed : llamada.tipo === 'video' ? Video : Phone;
+      const titulo =
+        llamada.tipo === 'video'
+          ? perdida ? (isMine ? 'Videollamada sin respuesta' : 'Videollamada perdida') : 'Videollamada'
+          : perdida ? (isMine ? 'Llamada sin respuesta' : 'Llamada perdida') : 'Llamada de voz';
+      const dur = `${Math.floor(llamada.duracion / 60)}:${String(llamada.duracion % 60).padStart(2, '0')}`;
+      return (
+        <div className="flex items-center gap-2.5 min-w-[200px] py-0.5">
+          <span
+            className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+              isMine ? 'bg-white/20' : perdida ? 'bg-[#FDEBD3] text-[#B03030]' : 'bg-[#F2F4F7] dark:bg-white/15'
+            }`}
+          >
+            <Icono className="w-5 h-5" strokeWidth={2} />
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-['Inter'] font-medium">{titulo}</span>
+            <span className={`block text-[11px] font-['Inter'] ${isMine ? 'text-white/85' : 'text-[#5B6670] dark:text-[#E3E7EC]'}`}>
+              {perdida ? 'Toca para llamar' : dur}
+            </span>
+          </span>
+          {onLlamar && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onLlamar(llamada.tipo);
+              }}
+              className={`p-2 rounded-full ${isMine ? 'hover:bg-white/15' : 'hover:bg-[#F2F4F7] dark:hover:bg-white/10'}`}
+              aria-label="Volver a llamar"
+            >
+              {llamada.tipo === 'video' ? <Video className="w-5 h-5" strokeWidth={2} /> : <Phone className="w-5 h-5" strokeWidth={2} />}
+            </button>
+          )}
+          <span className="self-end">{metadata}</span>
+        </div>
+      );
+    }
 
     // Sticker: la imagen sola y la hora en una etiquetita
     if (media && esSticker) {
@@ -228,7 +299,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           {media}
           {text ? (
             <div className="mt-1 text-[14px] leading-[19px] font-['Inter'] break-words whitespace-pre-wrap max-w-[240px]">
-              {text}
+              {busqueda ? resaltarTexto(text, busqueda) : text}
               {metadata}
             </div>
           ) : (
@@ -267,7 +338,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               </span>
             );
           }
-          return <span key={idx}>{seg.content}</span>;
+          return <span key={idx}>{busqueda ? resaltarTexto(seg.content, busqueda) : seg.content}</span>;
         })}
         {metadata}
       </div>
@@ -299,6 +370,12 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     >
       <div
         onContextMenu={handleContextMenu}
+        onDoubleClick={(e) => {
+          if (window.matchMedia('(pointer: fine)').matches) {
+            e.preventDefault();
+            dobleToque();
+          }
+        }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -357,6 +434,13 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
         {renderQuote()}
         {renderBody()}
+
+        {/* Corazón al dar doble toque */}
+        {corazon && (
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
+            <span className="text-4xl animate-[corazon_700ms_ease-out_forwards]">❤️</span>
+          </span>
+        )}
 
       </div>
 

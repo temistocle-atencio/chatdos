@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { NotificacionesAjustes } from '../components/NotificacionesAjustes';
 import { BloqueoAjustes } from '../components/BloqueoAjustes';
 import { FondoChat } from '../components/FondoChat';
+import { CopiaSeguridad } from '../components/CopiaSeguridad';
 import { useNombreApp } from '../lib/nombreApp';
 
 export const AjustesPage: React.FC = () => {
@@ -80,6 +81,8 @@ export const AjustesPage: React.FC = () => {
         <ChevronRight className="w-4 h-4 text-[#5B6670] dark:text-[#E3E7EC]" strokeWidth={2} />
       </button>
       {fondoOpen && <FondoChat onCerrar={() => setFondoOpen(false)} />}
+
+      <CopiaSeguridad />
 
       <NotificacionesAjustes />
 

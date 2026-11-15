@@ -17,6 +17,11 @@ self.addEventListener('push', (event) => {
     renotify: true,
     data: { url: data.url || '/chatdos/' },
   };
+  // Llamada entrante: que se quede en pantalla y vibre más
+  if (data.llamada) {
+    opciones.requireInteraction = true;
+    opciones.vibrate = [500, 250, 500, 250, 500];
+  }
 
   event.waitUntil(
     (async () => {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Reply, Copy, Pencil, Trash2, EyeOff, Plus, X, Sticker } from 'lucide-react';
+import { Reply, Copy, Pencil, Trash2, EyeOff, Plus, X, Sticker, Pin, PinOff, Info } from 'lucide-react';
 import type { DecryptedMessage } from '../types/chat';
 
 // Reacciones rápidas, como en WhatsApp
@@ -21,6 +21,9 @@ interface MessageActionsSheetProps {
   onDeleteForMe: () => void;
   onDeleteForAll: () => void;
   onSaveSticker?: () => void;
+  fijado?: boolean;
+  onFijar?: () => void;
+  onInfo?: () => void;
 }
 
 export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
@@ -36,6 +39,9 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
   onDeleteForMe,
   onDeleteForAll,
   onSaveSticker,
+  fijado,
+  onFijar,
+  onInfo,
 }) => {
   const isDeleted = message.deleted_for_all;
   const hasText = !!message.payload?.text && !message.decryptionError;
@@ -122,6 +128,14 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
               message.payload?.media?.sticker ? 'Guardar en mis stickers' : 'Guardar como sticker',
               onSaveSticker
             )}
+          {onFijar &&
+            !isDeleted &&
+            item(
+              fijado ? <PinOff className="w-5 h-5" strokeWidth={2} /> : <Pin className="w-5 h-5" strokeWidth={2} />,
+              fijado ? 'Quitar de fijados' : 'Fijar arriba',
+              onFijar
+            )}
+          {onInfo && isMine && !isDeleted && !message.isPending && item(<Info className="w-5 h-5" strokeWidth={2} />, 'Info', onInfo)}
           {item(<EyeOff className="w-5 h-5" strokeWidth={2} />, 'Eliminar para mí', onDeleteForMe)}
           {isMine && !isDeleted && !message.isPending &&
             item(<Trash2 className="w-5 h-5" strokeWidth={2} />, 'Eliminar para todos', onDeleteForAll, true)}

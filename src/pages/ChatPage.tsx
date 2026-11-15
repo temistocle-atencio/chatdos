@@ -32,6 +32,11 @@ import {
   ChevronLeft as FlechaIzq,
   Eraser,
   Wallpaper,
+  ChevronDown,
+  Search,
+  Timer,
+  Phone,
+  Video,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import {
@@ -50,6 +55,12 @@ import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { FondoChat } from '../components/FondoChat';
+import { BuscarEnChat } from '../components/BuscarEnChat';
+import { MensajeFijado } from '../components/MensajeFijado';
+import { InfoMensaje } from '../components/InfoMensaje';
+import { TemporalesModal } from '../components/TemporalesModal';
+import { borrarVencidos, estaVencido, fijarMensaje, leerAjustesChat, nombreDuracion, ponerTemporales, type AjustesChat } from '../lib/ajustesChat';
+import { iniciarLlamada, type TipoLlamada } from '../lib/llamadas';
 import { hayFondo, useFondo } from '../lib/fondo';
 import { CapaFondo } from '../components/CapaFondo';
 import { useTheme } from '../context/ThemeContext';
@@ -91,6 +102,7 @@ import {
   llavesAnterioresDelChat,
   computeSecurityNumber,
   checkPartnerKeyChange,
+  aceptarLlaveNueva,
 } from '../lib/crypto';
 import {
   formatLastSeen,
@@ -165,6 +177,39 @@ export const ChatPage: React.FC = () => {
   // Nota de la otra persona (burbujita junto a su foto; se esconde al subir a leer)
   const notaPartner = useNotaDelChat(chatId);
   const [alFinal, setAlFinal] = useState(true);
+  const alFinalRef = useRef(true);
+  alFinalRef.current = alFinal;
+  // Mensajes nuevos que llegaron mientras se leía más arriba (botón para bajar)
+  const [nuevosAbajo, setNuevosAbajo] = useState(0);
+  // Primer mensaje sin leer al abrir el chat (línea "mensajes nuevos")
+  const [primerNoLeido, setPrimerNoLeido] = useState<{ id: string; n: number } | null>(null);
+  const noLeidoCalculado = useRef<string | null>(null);
+  // Buscar, fijar, temporales, info
+  const [busqueda, setBusqueda] = useState<string | null>(null);
+  const [ajustes, setAjustes] = useState<AjustesChat>({ fijado: null, temporales: 0 });
+  const [temporalesOpen, setTemporalesOpen] = useState(false);
+  const [infoMsg, setInfoMsg] = useState<DecryptedMessage | null>(null);
+  const [, setReloj] = useState(0); // para esconder los temporales cuando vencen
+  const recargarAjustesRef = useRef<() => void>(() => {});
+  const recargarAjustes = useCallback(() => {
+    if (!chatId) return;
+    leerAjustesChat(chatId).then((a) => a && setAjustes(a));
+  }, [chatId]);
+  useEffect(() => {
+    if (!chatId) return;
+    setAjustes({ fijado: null, temporales: 0 });
+    setPrimerNoLeido(null);
+    noLeidoCalculado.current = null;
+    setNuevosAbajo(0);
+    recargarAjustes();
+    void borrarVencidos(chatId);
+    const cada = setInterval(() => setReloj((x) => x + 1), 30000);
+    return () => clearInterval(cada);
+  }, [chatId, recargarAjustes]);
+  recargarAjustesRef.current = recargarAjustes;
+  useEffect(() => {
+    if (alFinal) setNuevosAbajo(0);
+  }, [alFinal]);
   const partnerId = partner?.id;
   const partnerLlave = partner?.public_key ? JSON.stringify(partner.public_key) : '';
   useEffect(() => {
@@ -544,6 +589,12 @@ export const ChatPage: React.FC = () => {
         }
 
         const rawList = (data || []) as DbMessage[];
+        // Línea de "mensajes nuevos": el más viejo de la otra persona que todavía no había leído
+        if (noLeidoCalculado.current !== chatId) {
+          noLeidoCalculado.current = chatId;
+          const sinLeer = rawList.filter((m) => m.sender_id !== user?.id && !m.read_at && !m.deleted_for_all);
+          if (isMounted) setPrimerNoLeido(sinLeer.length ? { id: sinLeer[sinLeer.length - 1].id, n: sinLeer.length } : null);
+        }
         if (rawList.length === 50) {
           if (isMounted) setHasMoreOlder(true);
         }
@@ -583,7 +634,12 @@ export const ChatPage: React.FC = () => {
       } finally {
         if (isMounted) {
           setLoadingMessages(false);
-          scrollToBottom();
+          // Si hay mensajes nuevos, se abre en la línea de "mensajes nuevos"; si no, al final
+          setTimeout(() => {
+            const linea = document.getElementById('linea-nuevos');
+            if (linea) linea.scrollIntoView({ block: 'start' });
+            else scrollToBottom();
+          }, 120);
         }
       }
     };
@@ -791,6 +847,11 @@ export const ChatPage: React.FC = () => {
         if (isMounted) limpiarPantallaRef.current();
       });
 
+      // La otra persona fijó un mensaje o cambió los mensajes temporales
+      channel.on('broadcast', { event: 'ajustes' }, () => {
+        if (isMounted) recargarAjustesRef.current();
+      });
+
       // Escuchar broadcast 'typing'
       channel.on('broadcast', { event: 'typing' }, (eventPayload) => {
         if (!isMounted) return;
@@ -840,7 +901,9 @@ export const ChatPage: React.FC = () => {
             return [...prev, decrypted];
           });
 
-          scrollToBottom();
+          // Si estoy leyendo más arriba, no me bajo: se cuenta en el botón de bajar
+          if (newDbMsg.sender_id !== user.id && !alFinalRef.current) setNuevosAbajo((n) => n + 1);
+          else scrollToBottom();
         }
       );
 
@@ -1728,6 +1791,47 @@ export const ChatPage: React.FC = () => {
     setTimeout(() => setHighlightId(null), 1600);
   };
 
+  // ----- Fijar, temporales, llamadas y doble toque -----
+  const difundirAjustes = () => {
+    activeChannelRef.current?.send({ type: 'broadcast', event: 'ajustes', payload: {} }).catch(() => {});
+  };
+
+  const alternarFijado = async (msg: DecryptedMessage) => {
+    if (!chatId) return;
+    const nuevo = ajustes.fijado === msg.id ? null : msg.id;
+    setActionMsg(null);
+    setAjustes((a) => ({ ...a, fijado: nuevo }));
+    try {
+      await fijarMensaje(chatId, nuevo);
+      difundirAjustes();
+      setToast(nuevo ? 'Mensaje fijado arriba' : 'Se quitó el mensaje fijado');
+    } catch (e) {
+      recargarAjustes();
+      setToast(e instanceof Error ? e.message : 'No se pudo fijar');
+    }
+  };
+
+  const elegirTemporales = async (segundos: number) => {
+    if (!chatId) return;
+    await ponerTemporales(chatId, segundos);
+    setAjustes((a) => ({ ...a, temporales: segundos }));
+    difundirAjustes();
+    setToast(segundos ? `Mensajes temporales: ${nombreDuracion(segundos)}` : 'Mensajes temporales desactivados');
+  };
+
+  const llamar = async (tipo: TipoLlamada) => {
+    if (!chatId) return;
+    try {
+      await iniciarLlamada(chatId, tipo);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'No se pudo llamar');
+    }
+  };
+
+  const corazonDobleToque = (msg: DecryptedMessage) => {
+    if (myReactionFor(msg.id) !== '❤️') void toggleReaction(msg, '❤️');
+  };
+
   // Abrir modal de Número de Seguridad
   const handleOpenSecurityModal = async () => {
     if (!partner?.public_key || !myProfile?.public_key) {
@@ -1813,6 +1917,9 @@ export const ChatPage: React.FC = () => {
   const hasPartnerKey = !!partner.public_key;
   const hasInputText = inputText.trim().length > 0;
 
+  // Los mensajes temporales vencidos no se muestran (el servidor los borra al abrir)
+  const visibles = messages.filter((m) => !estaVencido(m));
+
   return (
     <div
       className="flex-1 flex flex-col h-full min-h-0 w-full relative overflow-hidden bg-[#F2F4F7] dark:bg-[#1F2933]"
@@ -1822,9 +1929,22 @@ export const ChatPage: React.FC = () => {
       {imagenFondo && <CapaFondo fondo={fondoChat} extraOscuro={resolvedTheme === 'dark' ? 0.45 : 0} />}
       {/* 4. UNA SOLA CABECERA EN EL CHAT (fondo #003A73 con foto, nombre, estado, llave y menú) */}
       <header
-        className="bg-[#003A73] text-white px-3 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30"
+        className="relative bg-[#003A73] text-white px-3 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.12)] shrink-0 z-30"
         style={{ paddingTop: 'env(safe-area-inset-top)', height: 'calc(3.5rem + env(safe-area-inset-top))' }}
       >
+        {busqueda !== null && (
+          <div className="absolute inset-x-0 bottom-0 h-14">
+            <BuscarEnChat
+              mensajes={messages}
+              texto={busqueda}
+              onTexto={setBusqueda}
+              onIr={goToMessage}
+              onCerrar={() => setBusqueda(null)}
+              hayAnteriores={hasMoreOlder}
+              onCargarAnteriores={loadOlderMessages}
+            />
+          </div>
+        )}
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {/* Flecha para volver a la lista de chats */}
           {(
@@ -1875,7 +1995,28 @@ export const ChatPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0">
+          {/* Llamadas */}
+          {hasPartnerKey && (
+            <>
+              <button
+                onClick={() => void llamar('video')}
+                className="p-2 text-white/85 hover:text-white hover:bg-white/10 rounded-[5px] transition-colors"
+                title="Videollamada"
+                aria-label="Videollamada"
+              >
+                <Video className="w-5 h-5" strokeWidth={2} />
+              </button>
+              <button
+                onClick={() => void llamar('voz')}
+                className="p-2 text-white/85 hover:text-white hover:bg-white/10 rounded-[5px] transition-colors"
+                title="Llamada de voz"
+                aria-label="Llamada de voz"
+              >
+                <Phone className="w-5 h-5" strokeWidth={2} />
+              </button>
+            </>
+          )}
           {/* Botón de Llave para ver el Número de Seguridad */}
           <button
             onClick={handleOpenSecurityModal}
@@ -1940,6 +2081,28 @@ export const ChatPage: React.FC = () => {
                 >
                   <Wallpaper className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
                   <span>Fondo del chat</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    setBusqueda('');
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                >
+                  <Search className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+                  <span>Buscar</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    setTemporalesOpen(true);
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-xs font-['Inter'] text-[#1F2933] dark:text-[#E3E7EC] hover:bg-[#F2F4F7] dark:hover:bg-[#1F2933] flex items-center gap-2.5 transition-colors"
+                >
+                  <Timer className="w-4 h-4 text-[#005198] dark:text-[#E3E7EC]" strokeWidth={2} />
+                  <span>Mensajes temporales</span>
                 </button>
 
                 <button
@@ -2012,13 +2175,50 @@ export const ChatPage: React.FC = () => {
 
       {/* Alerta si la llave de la otra persona cambió */}
       {keyChangedAlert && (
-        <div className="p-2.5 bg-[#FDEBD3] text-[#8A4B00] text-xs font-['Inter'] flex items-start gap-2 leading-relaxed shrink-0">
-          <ShieldAlert className="w-4 h-4 text-[#8A4B00] shrink-0 mt-0.5" strokeWidth={2} />
+        <div className="p-2.5 bg-[#FDEBD3] text-[#8A4B00] text-xs font-['Inter'] flex items-center gap-2 leading-relaxed shrink-0 relative z-20">
+          <ShieldAlert className="w-4 h-4 text-[#8A4B00] shrink-0" strokeWidth={2} />
           <div className="flex-1">
-            <strong>Aviso de seguridad:</strong> La llave pública de {partnerName} ha cambiado.
-            Puedes verificar el número de seguridad en persona.
+            {partnerName} entró desde otro dispositivo o cambió su contraseña. El chat sigue cifrado.
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setKeyChangedAlert(false);
+              if (partner?.public_key) void aceptarLlaveNueva(partner.id, partner.public_key as JsonWebKey);
+            }}
+            className="px-2 py-1 rounded-[5px] font-['Poppins'] font-semibold text-[11px] bg-[#8A4B00]/10 hover:bg-[#8A4B00]/20 shrink-0"
+          >
+            Entendido
+          </button>
         </div>
+      )}
+
+      {/* Mensaje fijado */}
+      {ajustes.fijado && (
+        <MensajeFijado
+          mensaje={messages.find((m) => m.id === ajustes.fijado)}
+          onIr={() => goToMessage(ajustes.fijado!)}
+          onQuitar={() => {
+            const m = messages.find((x) => x.id === ajustes.fijado);
+            if (m) void alternarFijado(m);
+            else if (chatId) {
+              setAjustes((a) => ({ ...a, fijado: null }));
+              fijarMensaje(chatId, null).then(difundirAjustes).catch(recargarAjustes);
+            }
+          }}
+        />
+      )}
+
+      {/* Mensajes temporales activos */}
+      {ajustes.temporales > 0 && (
+        <button
+          type="button"
+          onClick={() => setTemporalesOpen(true)}
+          className="shrink-0 relative z-20 flex items-center justify-center gap-1.5 py-1 text-[11px] font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC] bg-[#F2F4F7]/90 dark:bg-[#1F2933]/90"
+        >
+          <Timer className="w-3.5 h-3.5" strokeWidth={2} />
+          <span>Mensajes temporales: se borran después de {nombreDuracion(ajustes.temporales)}</span>
+        </button>
       )}
 
       {/* Si la otra persona no tiene llave todavía */}
@@ -2061,14 +2261,14 @@ export const ChatPage: React.FC = () => {
 
           {loadingMessages ? (
             <BurbujasDeRelleno />
-          ) : messages.length === 0 ? (
+          ) : visibles.length === 0 ? (
             <div className="flex-1 flex flex-col justify-center items-center text-center p-6 text-[#5B6670] dark:text-[#E3E7EC]">
               <p className="text-xs font-['Inter'] bg-white dark:bg-[#253240] px-4 py-2 rounded-[5px] border border-[#E3E7EC] dark:border-[#003A73] shadow-xs">
                 No hay mensajes aún. ¡Envía el primer mensaje cifrado a {partnerName}!
               </p>
             </div>
           ) : (
-            messages.map((msg, index) => {
+            visibles.map((msg, index) => {
               const isMine = msg.sender_id === user?.id;
 
               const currentMsgDate = formatMessageDateSeparator(
@@ -2077,17 +2277,24 @@ export const ChatPage: React.FC = () => {
               const prevMsgDate =
                 index > 0
                   ? formatMessageDateSeparator(
-                      messages[index - 1].payload?.sentAt || messages[index - 1].created_at
+                      visibles[index - 1].payload?.sentAt || visibles[index - 1].created_at
                     )
                   : null;
 
               const showDateSeparator = currentMsgDate !== prevMsgDate;
               // Mensajes seguidos de la misma persona van juntos (sin colita y con poco espacio)
               const isFirstInGroup =
-                index === 0 || showDateSeparator || messages[index - 1].sender_id !== msg.sender_id;
+                index === 0 || showDateSeparator || visibles[index - 1].sender_id !== msg.sender_id;
 
               return (
                 <React.Fragment key={msg.id}>
+                  {primerNoLeido?.id === msg.id && (
+                    <div id="linea-nuevos" className="flex justify-center my-2 select-none scroll-mt-16">
+                      <span className="px-3 py-1 rounded-full bg-[#F28C1B] text-[11px] font-['Poppins'] font-semibold text-[#1F2933] shadow-xs">
+                        {primerNoLeido.n === 1 ? '1 mensaje nuevo' : `${primerNoLeido.n} mensajes nuevos`}
+                      </span>
+                    </div>
+                  )}
                   {showDateSeparator && (
                     <div className="flex justify-center my-2 select-none">
                       <span className="px-3 py-1 rounded-[5px] bg-[#E3E7EC] dark:bg-[#253240] text-[11px] font-['Poppins'] font-medium text-[#5B6670] dark:text-[#E3E7EC] shadow-xs">
@@ -2120,10 +2327,36 @@ export const ChatPage: React.FC = () => {
                     }
                     onQuoteClick={goToMessage}
                     onReactionClick={toggleReaction}
+                    busqueda={busqueda ?? ''}
+                    fijado={ajustes.fijado === msg.id}
+                    onDobleToque={corazonDobleToque}
+                    onLlamar={(t) => void llamar(t)}
                   />
                 </React.Fragment>
               );
             })
+          )}
+
+          {/* Botón para bajar al último mensaje */}
+          {!alFinal && !loadingMessages && visibles.length > 0 && (
+            <div className="sticky bottom-1 h-0 self-end z-10">
+              <button
+                type="button"
+                onClick={() => {
+                  setNuevosAbajo(0);
+                  scrollToBottom();
+                }}
+                className="relative -translate-y-full w-10 h-10 rounded-full bg-white dark:bg-[#253240] text-[#5B6670] dark:text-[#E3E7EC] shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#E3E7EC] dark:border-[#003A73] flex items-center justify-center"
+                aria-label="Ir al último mensaje"
+              >
+                <ChevronDown className="w-6 h-6" strokeWidth={2} />
+                {nuevosAbajo > 0 && (
+                  <span className="absolute -top-1.5 -left-1.5 min-w-5 h-5 px-1 rounded-full bg-[#F28C1B] text-[#1F2933] text-[11px] font-['Poppins'] font-bold flex items-center justify-center">
+                    {nuevosAbajo > 99 ? '99+' : nuevosAbajo}
+                  </span>
+                )}
+              </button>
+            </div>
           )}
 
           <div ref={messagesEndRef} />
@@ -2612,7 +2845,18 @@ export const ChatPage: React.FC = () => {
             setConfirmDeleteAll(actionMsg);
             setActionMsg(null);
           }}
+          fijado={ajustes.fijado === actionMsg.id}
+          onFijar={() => void alternarFijado(actionMsg)}
+          onInfo={() => {
+            setInfoMsg(actionMsg);
+            setActionMsg(null);
+          }}
         />
+      )}
+
+      {infoMsg && <InfoMensaje mensaje={infoMsg} nombre={partnerName} onCerrar={() => setInfoMsg(null)} />}
+      {temporalesOpen && (
+        <TemporalesModal actual={ajustes.temporales} onElegir={elegirTemporales} onCerrar={() => setTemporalesOpen(false)} />
       )}
 
       {/* Todos los emojis para reaccionar */}

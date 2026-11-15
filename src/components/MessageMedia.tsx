@@ -260,6 +260,37 @@ export const MessageMedia: React.FC<MessageMediaProps> = ({
   );
 };
 
+// Ondas de las notas de voz (se calculan una vez por mensaje y se guardan en memoria)
+const ondas = new Map<string, number[]>();
+const BARRAS = 36;
+async function calcularOnda(id: string, url: string): Promise<number[] | null> {
+  if (ondas.has(id)) return ondas.get(id)!;
+  try {
+    const datos = await (await fetch(url)).arrayBuffer();
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx();
+    const audio = await new Promise<AudioBuffer>((ok, mal) => ctx.decodeAudioData(datos, ok, mal));
+    ctx.close().catch(() => {});
+    const canal = audio.getChannelData(0);
+    const paso = Math.max(1, Math.floor(canal.length / BARRAS));
+    const picos: number[] = [];
+    for (let b = 0; b < BARRAS; b++) {
+      let max = 0;
+      for (let i = b * paso; i < Math.min(canal.length, (b + 1) * paso); i += 16) max = Math.max(max, Math.abs(canal[i]));
+      picos.push(max);
+    }
+    const tope = Math.max(...picos, 0.01);
+    const onda = picos.map((v) => Math.max(0.12, v / tope));
+    ondas.set(id, onda);
+    return onda;
+  } catch {
+    return null;
+  }
+}
+
+// Velocidad de las notas de voz (se recuerda para la siguiente, como en WhatsApp)
+let velocidadNotas = 1;
+
 // Reproductor de audio dentro de la burbuja
 const AudioPlayer: React.FC<{
   message: DecryptedMessage;
@@ -278,6 +309,32 @@ const AudioPlayer: React.FC<{
   const [duration, setDuration] = useState(media?.duration || 0);
   const muted = isMine ? 'text-white/85' : 'text-[#5B6670] dark:text-[#E3E7EC]';
   const track = isMine ? 'accent-white' : 'accent-[#005198] dark:accent-white';
+  const esNota = !media?.music;
+  const [onda, setOnda] = useState<number[] | null>(() => ondas.get(message.id) ?? null);
+  const [velocidad, setVelocidad] = useState(velocidadNotas);
+
+  useEffect(() => {
+    if (!esNota || !url || onda) return;
+    let vivo = true;
+    calcularOnda(message.id, url).then((o) => vivo && o && setOnda(o));
+    return () => {
+      vivo = false;
+    };
+  }, [esNota, url, onda, message.id]);
+
+  const cambiarVelocidad = () => {
+    const v = velocidad === 1 ? 1.5 : velocidad === 1.5 ? 2 : 1;
+    velocidadNotas = v;
+    setVelocidad(v);
+    if (audioRef.current) audioRef.current.playbackRate = v;
+  };
+
+  const saltarA = (e: React.MouseEvent<HTMLDivElement>) => {
+    const caja = e.currentTarget.getBoundingClientRect();
+    const t = Math.max(0, Math.min(1, (e.clientX - caja.left) / caja.width)) * (duration || 0);
+    if (audioRef.current) audioRef.current.currentTime = t;
+    setTime(t);
+  };
 
   const toggle = async () => {
     const a = audioRef.current;
@@ -292,6 +349,7 @@ const AudioPlayer: React.FC<{
       a.src = u;
     }
     try {
+      if (esNota) a.playbackRate = velocidad;
       await a.play();
     } catch {
       // iPhone a veces pide un segundo toque después de descargar; el botón queda listo
@@ -331,20 +389,52 @@ const AudioPlayer: React.FC<{
           )}
         </button>
         <div className="flex-1 min-w-0">
-          <input
-            type="range"
-            min={0}
-            max={duration || 1}
-            step={0.1}
-            value={time}
-            onChange={(e) => {
-              const t = Number(e.target.value);
-              if (audioRef.current) audioRef.current.currentTime = t;
-              setTime(t);
-            }}
-            className={`w-full h-1 ${track}`}
-            aria-label="Avance del audio"
-          />
+          {esNota && onda ? (
+            <div
+              role="slider"
+              aria-label="Avance de la nota de voz"
+              aria-valuemin={0}
+              aria-valuemax={Math.round(duration || 0)}
+              aria-valuenow={Math.round(time)}
+              tabIndex={0}
+              onClick={saltarA}
+              className="h-7 flex items-center gap-[2px] cursor-pointer"
+            >
+              {onda.map((v, i) => {
+                const hecho = duration > 0 && i / onda.length < time / duration;
+                return (
+                  <span
+                    key={i}
+                    className={`flex-1 rounded-full ${
+                      hecho
+                        ? isMine
+                          ? 'bg-white'
+                          : 'bg-[#005198] dark:bg-white'
+                        : isMine
+                          ? 'bg-white/40'
+                          : 'bg-[#5B6670]/35 dark:bg-white/35'
+                    }`}
+                    style={{ height: `${Math.round(v * 100)}%` }}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <input
+              type="range"
+              min={0}
+              max={duration || 1}
+              step={0.1}
+              value={time}
+              onChange={(e) => {
+                const t = Number(e.target.value);
+                if (audioRef.current) audioRef.current.currentTime = t;
+                setTime(t);
+              }}
+              className={`w-full h-1 ${track}`}
+              aria-label="Avance del audio"
+            />
+          )}
           <div className={`flex justify-between text-[11px] font-['Inter'] mt-0.5 ${muted}`}>
             <span className="flex items-center gap-1">
               {!media?.music && <Mic className="w-3 h-3" strokeWidth={2} />}
@@ -356,6 +446,18 @@ const AudioPlayer: React.FC<{
                   ? 'No se pudo cargar'
                   : formatDuration(playing || time ? time : duration)}
             </span>
+            {esNota && !pending && (
+              <button
+                type="button"
+                onClick={cambiarVelocidad}
+                className={`px-1.5 rounded-full text-[10px] font-['Poppins'] font-semibold leading-4 ${
+                  isMine ? 'bg-white/20 text-white' : 'bg-[#F2F4F7] dark:bg-white/15 text-[#5B6670] dark:text-white'
+                }`}
+                aria-label="Velocidad de la nota de voz"
+              >
+                {velocidad === 1 ? '1x' : velocidad === 1.5 ? '1.5x' : '2x'}
+              </button>
+            )}
           </div>
         </div>
       </div>

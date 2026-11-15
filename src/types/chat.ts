@@ -29,6 +29,12 @@ export interface MessagePayload {
     music?: boolean; // true = archivo de audio elegido del celular, false = nota de voz
     sticker?: boolean; // se muestra sin burbuja, como sticker
   };
+  // Registro de una llamada (se muestra como burbuja especial)
+  llamada?: {
+    tipo: 'voz' | 'video';
+    estado: 'completada' | 'perdida' | 'rechazada' | 'cancelada';
+    duracion: number; // segundos
+  };
 }
 
 export interface DbMessage {
@@ -47,6 +53,7 @@ export interface DbMessage {
   delivered_at: string | null;
   read_at: string | null;
   viewed_at: string | null;
+  expires_at?: string | null; // mensajes temporales: cuándo se borra
 }
 
 export interface DecryptedMessage extends DbMessage {

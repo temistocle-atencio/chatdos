@@ -517,6 +517,11 @@ export async function computeKeyThumbprint(jwk: JsonWebKey): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** La persona ya vio el aviso de llave nueva: se guarda como conocida y no se vuelve a mostrar. */
+export async function aceptarLlaveNueva(partnerId: string, publica: JsonWebKey): Promise<void> {
+  await saveKnownPartnerKey(partnerId, await computeKeyThumbprint(publica));
+}
+
 /**
  * Comprueba si la llave pública de la otra persona ha cambiado respecto a la guardada en IndexedDB.
  * Devuelve true si la llave es conocida y cambió. Si es la primera vez que se ve, la guarda y devuelve false.
