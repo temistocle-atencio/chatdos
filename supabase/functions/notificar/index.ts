@@ -215,38 +215,62 @@ Deno.serve(async (req) => {
 
     // ---------- Fotos en calidad Original (Cloudflare R2) ----------
     // Solo se entregan permisos temporales para subir o bajar el archivo CIFRADO; aquí nunca se ve la foto.
+    // Tope de 9 GB (lo gratis son 10 GB): si no cabe, se borran los originales más viejos.
     if (cuerpo.accion === 'original_subir' || cuerpo.accion === 'original_bajar' || cuerpo.accion === 'original_borrar') {
       const cuenta = Deno.env.get('R2_ACCOUNT_ID');
       const llaveId = Deno.env.get('R2_ACCESS_KEY_ID');
       const secreto = Deno.env.get('R2_SECRET_ACCESS_KEY');
       const balde = Deno.env.get('R2_BUCKET') || 'chatdos-originales';
-      if (!cuenta || !llaveId || !secreto) return responder({ error: 'El servicio de fotos originales no está configurado.' }, 503);
+      if (!cuenta || !llaveId || !secreto) return responder({ error: 'El servicio de fotos originales no está configurado.' });
       const r2 = new AwsClient({ accessKeyId: llaveId, secretAccessKey: secreto, service: 's3', region: 'auto' });
+      const enR2 = (r: string) => `https://${cuenta}.r2.cloudflarestorage.com/${balde}/${r}`;
+      const TOPE = 9 * 1024 * 1024 * 1024;
 
       let ruta = '';
       let chatId = '';
       if (cuerpo.accion === 'original_subir') {
         chatId = String(cuerpo.chat_id ?? '');
-        const tam = Number(cuerpo.tam ?? 0);
-        if (!tam || tam > 260 * 1024 * 1024) return responder({ error: 'La foto es demasiado grande (máximo 250 MB).' }, 400);
         ruta = `${chatId}/${crypto.randomUUID()}.bin`;
       } else {
         ruta = String(cuerpo.ruta ?? '');
         chatId = ruta.split('/')[0];
       }
-      if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.bin$/.test(ruta)) return responder({ error: 'Archivo no válido' }, 400);
+      if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.bin$/.test(ruta)) return responder({ error: 'Archivo no válido' });
       const { data: soy } = await servicio.from('chat_members').select('user_id').eq('chat_id', chatId).eq('user_id', yo).maybeSingle();
-      if (!soy) return responder({ error: 'No eres parte de este chat' }, 403);
+      if (!soy) return responder({ error: 'No eres parte de este chat' });
 
-      const direccion = new URL(`https://${cuenta}.r2.cloudflarestorage.com/${balde}/${ruta}`);
       if (cuerpo.accion === 'original_borrar') {
-        const r = await r2.fetch(direccion.href, { method: 'DELETE' });
-        return responder({ ok: r.ok });
+        await r2.fetch(enR2(ruta), { method: 'DELETE' }).catch(() => null);
+        await servicio.from('fotos_originales').delete().eq('ruta', ruta);
+        return responder({ ok: true });
       }
-      direccion.searchParams.set('X-Amz-Expires', cuerpo.accion === 'original_subir' ? '1800' : '900');
-      const firmado = await r2.sign(new Request(direccion.href, { method: cuerpo.accion === 'original_subir' ? 'PUT' : 'GET' }), {
-        aws: { signQuery: true },
-      });
+
+      if (cuerpo.accion === 'original_bajar') {
+        const { data: existe } = await servicio.from('fotos_originales').select('ruta').eq('ruta', ruta).maybeSingle();
+        if (!existe) return responder({ error: 'El original ya no está guardado (se liberó espacio). La foto en HD sigue en el chat.' });
+        const u = new URL(enR2(ruta));
+        u.searchParams.set('X-Amz-Expires', '900');
+        const firmado = await r2.sign(new Request(u.href, { method: 'GET' }), { aws: { signQuery: true } });
+        return responder({ url: firmado.url, ruta });
+      }
+
+      // Subir: revisar espacio y, si no cabe, borrar los originales más viejos
+      const tam = Number(cuerpo.tam ?? 0);
+      if (!tam || tam > 260 * 1024 * 1024) return responder({ error: 'La foto es demasiado grande (máximo 250 MB).' });
+      const { data: todas } = await servicio.from('fotos_originales').select('ruta, size').order('created_at', { ascending: true });
+      let total = (todas ?? []).reduce((t, f) => t + Number(f.size), 0);
+      for (const f of todas ?? []) {
+        if (total + tam <= TOPE) break;
+        await r2.fetch(enR2(f.ruta), { method: 'DELETE' }).catch(() => null);
+        await servicio.from('fotos_originales').delete().eq('ruta', f.ruta);
+        total -= Number(f.size);
+      }
+      if (total + tam > TOPE) return responder({ error: 'No hay espacio para fotos originales.' });
+      const { error: errAnotar } = await servicio.from('fotos_originales').insert({ ruta, chat_id: chatId, sender_id: yo, size: tam });
+      if (errAnotar) return responder({ error: 'No se pudo preparar la subida.' });
+      const u = new URL(enR2(ruta));
+      u.searchParams.set('X-Amz-Expires', '1800');
+      const firmado = await r2.sign(new Request(u.href, { method: 'PUT' }), { aws: { signQuery: true } });
       return responder({ url: firmado.url, ruta });
     }
 

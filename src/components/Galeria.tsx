@@ -36,7 +36,7 @@ const Diapositiva: React.FC<{
   const [error, setError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const original = m.kind === 'image' ? m.payload?.media?.original : undefined;
-  const [verOriginal, setVerOriginal] = useState<{ pct: number; listo: boolean; error?: boolean } | null>(null);
+  const [verOriginal, setVerOriginal] = useState<{ pct: number; listo: boolean; error?: string } | null>(null);
   const abrirOriginal = async () => {
     if (!original) return;
     setVerOriginal({ pct: 0, listo: false });
@@ -44,8 +44,8 @@ const Diapositiva: React.FC<{
       const u = await bajarOriginal(original, (pct) => setVerOriginal({ pct, listo: false }));
       setUrl(u);
       setVerOriginal({ pct: 100, listo: true });
-    } catch {
-      setVerOriginal({ pct: 0, listo: false, error: true });
+    } catch (e) {
+      setVerOriginal({ pct: 0, listo: false, error: e instanceof Error ? e.message : 'No se pudo. Toca para reintentar' });
     }
   };
 
@@ -95,14 +95,14 @@ const Diapositiva: React.FC<{
           type="button"
           onClick={() => void abrirOriginal()}
           disabled={!!verOriginal && !verOriginal.error}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 h-10 px-4 rounded-full bg-black/65 border border-white/30 text-white text-sm font-['Inter'] flex items-center gap-2"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[90%] min-h-10 py-2 px-4 rounded-full bg-black/65 text-center border border-white/30 text-white text-sm font-['Inter'] flex items-center gap-2"
         >
           {verOriginal && !verOriginal.error ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} /> Bajando original… {verOriginal.pct}%
             </>
           ) : verOriginal?.error ? (
-            'No se pudo. Tocar para reintentar'
+            verOriginal.error
           ) : (
             `Ver original · ${formatearPeso(original.size)}`
           )}
