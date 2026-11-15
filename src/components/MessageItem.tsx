@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Clock, Lock, Ban, ChevronDown, Check, CheckCheck, Reply, Pin, Timer, Phone, Video, PhoneMissed } from 'lucide-react';
 import { BurbujaContacto, BurbujaUbicacion } from './UbicacionYContacto';
+import { TarjetaEnlace } from './TarjetaEnlace';
 import { resaltarTexto } from './BuscarEnChat';
 import type { DecryptedMessage, Reaction } from '../types/chat';
 import { formatMessageTime, parseTextWithLinks } from '../lib/formatters';
@@ -24,6 +25,7 @@ interface MessageItemProps {
   fijado?: boolean;
   onDobleToque?: (message: DecryptedMessage) => void; // ❤️
   onLlamar?: (tipo: 'voz' | 'video') => void; // devolver una llamada desde el registro
+  onDejarUbicacion?: (messageId: string) => void; // dejar de compartir la ubicación en tiempo real
 }
 
 // Tiempo que hay que dejar presionado el mensaje en el celular para abrir el menú
@@ -46,6 +48,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   fijado = false,
   onDobleToque,
   onLlamar,
+  onDejarUbicacion,
 }) => {
   const ultimoToque = useRef(0);
   const [corazon, setCorazon] = useState(false);
@@ -281,7 +284,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     }
 
     // Ubicación y contacto
-    if (message.payload?.ubicacion) return <BurbujaUbicacion u={message.payload.ubicacion} isMine={isMine} metadata={metadata} />;
+    if (message.payload?.ubicacion)
+      return (
+        <BurbujaUbicacion
+          u={message.payload.ubicacion}
+          messageId={message.id}
+          isMine={isMine}
+          metadata={metadata}
+          onDejar={onDejarUbicacion ? () => onDejarUbicacion(message.id) : undefined}
+        />
+      );
     if (message.payload?.contacto) return <BurbujaContacto c={message.payload.contacto} isMine={isMine} metadata={metadata} />;
 
     // Sticker: la imagen sola y la hora en una etiquetita
@@ -315,8 +327,10 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     }
 
     const segments = parseTextWithLinks(text);
+    const enlace = message.payload?.enlace;
     return (
-      <div className="text-[14px] leading-[19px] font-['Inter'] break-words whitespace-pre-wrap">
+      <div className={`text-[14px] leading-[19px] font-['Inter'] break-words whitespace-pre-wrap ${enlace ? 'max-w-[280px]' : ''}`}>
+        {enlace && <TarjetaEnlace e={enlace} isMine={isMine} />}
         {segments.map((seg, idx) => {
           if (seg.type === 'link') {
             return (

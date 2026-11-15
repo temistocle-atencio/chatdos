@@ -51,6 +51,9 @@ import {
 import { avisarSelectorArchivo } from '../lib/bloqueo';
 import { CamaraChat, duracionGrabada } from '../components/CamaraChat';
 import { EnviarContacto, EnviarUbicacion } from '../components/UbicacionYContacto';
+import { pedirVistaPrevia, primerEnlace, type VistaEnlace } from '../lib/enlaces';
+import { VistaPreviaEscribiendo } from '../components/TarjetaEnlace';
+import { cargarUbicacionesVivo, compartir, dejarDeCompartir, retomarEnChat, useCompartiendoEn } from '../lib/ubicacionVivo';
 import { IconoCamara, IconoClip, IconoStickerCara } from '../components/Iconos';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
@@ -209,6 +212,28 @@ export const ChatPage: React.FC = () => {
     return () => clearInterval(cada);
   }, [chatId, recargarAjustes]);
   recargarAjustesRef.current = recargarAjustes;
+
+  // ----- Ubicación en tiempo real -----
+  const compartiendo = useCompartiendoEn(chatId);
+  const avisarUbicacion = useCallback(() => {
+    activeChannelRef.current?.send({ type: 'broadcast', event: 'ubicacion', payload: {} }).catch(() => {});
+  }, []);
+  const recargarVivoRef = useRef<() => void>(() => {});
+  recargarVivoRef.current = () => {
+    if (chatId && chatKey) void cargarUbicacionesVivo(chatId, chatKey);
+  };
+  useEffect(() => {
+    if (!chatId || !chatKey) return;
+    void cargarUbicacionesVivo(chatId, chatKey);
+    retomarEnChat(chatId, chatKey, avisarUbicacion);
+  }, [chatId, chatKey, avisarUbicacion]);
+  const hayVivoActivo = messages.some((m) => (m.payload?.ubicacion?.vivo?.hasta ?? 0) > Date.now());
+  useEffect(() => {
+    if (!hayVivoActivo) return;
+    // Por si la otra persona comparte sin tener este chat abierto (no llega el aviso al instante)
+    const t = setInterval(() => recargarVivoRef.current(), 20000);
+    return () => clearInterval(t);
+  }, [hayVivoActivo]);
   useEffect(() => {
     if (alFinal) setNuevosAbajo(0);
   }, [alFinal]);
@@ -863,6 +888,9 @@ export const ChatPage: React.FC = () => {
       channel.on('broadcast', { event: 'ajustes' }, () => {
         if (isMounted) recargarAjustesRef.current();
       });
+      channel.on('broadcast', { event: 'ubicacion' }, () => {
+        if (isMounted) recargarVivoRef.current();
+      });
 
       // Escuchar broadcast 'typing'
       channel.on('broadcast', { event: 'typing' }, (eventPayload) => {
@@ -1106,6 +1134,28 @@ export const ChatPage: React.FC = () => {
     }
   };
 
+  // ----- Vista previa del enlace que se está escribiendo -----
+  const [vistaEnlace, setVistaEnlace] = useState<{ url: string; datos: VistaEnlace | null; cargando: boolean } | null>(null);
+  const enlacesQuitados = useRef(new Set<string>());
+  const enlaceEscrito = !editingMsg ? primerEnlace(inputText) : null;
+  useEffect(() => {
+    if (!enlaceEscrito || enlacesQuitados.current.has(enlaceEscrito)) {
+      setVistaEnlace(null);
+      return;
+    }
+    let vivo = true;
+    setVistaEnlace((v) => (v?.url === enlaceEscrito ? v : { url: enlaceEscrito, datos: null, cargando: true }));
+    const t = setTimeout(() => {
+      pedirVistaPrevia(enlaceEscrito).then((datos) => {
+        if (vivo) setVistaEnlace(datos ? { url: enlaceEscrito, datos, cargando: false } : null);
+      });
+    }, 500);
+    return () => {
+      vivo = false;
+      clearTimeout(t);
+    };
+  }, [enlaceEscrito]);
+
   // 6. Enviar mensaje cifrado (o guardar la edición)
   const handleSendMessage = async (especial?: Pick<MessagePayload, 'ubicacion' | 'contacto'>) => {
     const textToSend = especial ? '' : inputText.trim();
@@ -1123,10 +1173,12 @@ export const ChatPage: React.FC = () => {
       ? { senderId: replying.sender_id, text: shortText(replying), kind: replying.kind }
       : undefined;
 
+    const enlace = !especial && vistaEnlace?.datos && primerEnlace(textToSend) === vistaEnlace.url ? vistaEnlace.datos : undefined;
     const payload: MessagePayload = {
       v: 1,
       ...(textToSend ? { text: textToSend } : {}),
       ...(especial ?? {}),
+      ...(enlace ? { enlace } : {}),
       sentAt,
       ...(replyPreview ? { replyPreview } : {}),
     };
@@ -1156,6 +1208,7 @@ export const ChatPage: React.FC = () => {
     setReplyTo(null);
     if (!especial) {
       setInputText('');
+      setVistaEnlace(null);
       setPanel(null);
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
     }
@@ -1188,12 +1241,14 @@ export const ChatPage: React.FC = () => {
         prev.map((m) => (m.id === messageId ? { ...m, isPending: false } : m))
       );
       notifyPartner(messageId);
+      return messageId;
     } catch (err) {
       console.error('[ChatDos] Error en handleSendMessage:', err);
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, isPending: true } : m))
       );
     }
+    return null;
   };
 
   // Limpiar el campo de texto
@@ -2230,6 +2285,21 @@ export const ChatPage: React.FC = () => {
         />
       )}
 
+      {/* Compartiendo la ubicación en tiempo real desde este celular */}
+      {compartiendo && (
+        <div className="shrink-0 relative z-20 flex items-center justify-center gap-2 py-1.5 px-3 text-[12px] font-['Inter'] text-white bg-[#1E9E5A]">
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+          <span>Compartiendo tu ubicación en tiempo real (deja ChatDos abierto)</span>
+          <button
+            type="button"
+            onClick={() => void dejarDeCompartir(compartiendo.messageId, avisarUbicacion)}
+            className="ml-1 underline font-semibold"
+          >
+            Detener
+          </button>
+        </div>
+      )}
+
       {/* Mensajes temporales activos */}
       {ajustes.temporales > 0 && (
         <button
@@ -2352,6 +2422,7 @@ export const ChatPage: React.FC = () => {
                     fijado={ajustes.fijado === msg.id}
                     onDobleToque={corazonDobleToque}
                     onLlamar={(t) => void llamar(t)}
+                    onDejarUbicacion={(id) => void dejarDeCompartir(id, avisarUbicacion)}
                   />
                 </React.Fragment>
               );
@@ -2389,6 +2460,16 @@ export const ChatPage: React.FC = () => {
         className={`relative px-2 pt-2 shrink-0 ${imagenFondo ? 'bg-transparent' : 'bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73]'}`}
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
+        {vistaEnlace && !editingMsg && (
+          <VistaPreviaEscribiendo
+            cargando={vistaEnlace.cargando}
+            e={vistaEnlace.datos}
+            onQuitar={() => {
+              enlacesQuitados.current.add(vistaEnlace.url);
+              setVistaEnlace(null);
+            }}
+          />
+        )}
         {(replyTo || editingMsg) && (
           <div className="flex items-center gap-2 mb-1.5 px-3 py-2 bg-white dark:bg-[#253240] rounded-[5px] border-l-[3px] border-[#005198] dark:border-[#E3E7EC] shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
             {editingMsg ? (
@@ -2835,9 +2916,16 @@ export const ChatPage: React.FC = () => {
       {enviarExtra === 'ubicacion' && (
         <EnviarUbicacion
           onCerrar={() => setEnviarExtra(null)}
-          onEnviar={(ubicacion) => {
+          onEnviar={async (ubicacion, vivoSegundos) => {
             setEnviarExtra(null);
-            void handleSendMessage({ ubicacion });
+            if (!vivoSegundos) {
+              void handleSendMessage({ ubicacion });
+              return;
+            }
+            const hasta = Date.now() + vivoSegundos * 1000;
+            const id = await handleSendMessage({ ubicacion: { ...ubicacion, vivo: { hasta } } });
+            if (id && chatId && chatKey) compartir({ chatId, messageId: id, hasta }, chatKey, avisarUbicacion, ubicacion);
+            else setToast('Sin conexión: no se pudo empezar a compartir en tiempo real');
           }}
         />
       )}

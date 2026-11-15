@@ -2,11 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { X, Loader2, MapPin, Phone, Copy, Check, UserRound } from 'lucide-react';
 import type { MessagePayload } from '../types/chat';
 import { IconoContactoColor, IconoUbicacionColor } from './Iconos';
+import { DURACIONES_VIVO, useUbicacionVivo } from '../lib/ubicacionVivo';
 
 type Ubicacion = NonNullable<MessagePayload['ubicacion']>;
 type Contacto = NonNullable<MessagePayload['contacto']>;
 
-export const enlaceMapa = (u: Ubicacion) => `https://www.google.com/maps/search/?api=1&query=${u.lat},${u.lng}`;
+export const enlaceMapa = (u: { lat: number; lng: number }) => `https://www.google.com/maps/search/?api=1&query=${u.lat},${u.lng}`;
 
 // ---------- Mapa pequeño (cuadros de OpenStreetMap, sin llaves ni cuentas) ----------
 export const MapaMini: React.FC<{ lat: number; lng: number; ancho: number; alto: number; zoom?: number }> = ({
@@ -50,31 +51,75 @@ export const MapaMini: React.FC<{ lat: number; lng: number; ancho: number; alto:
 };
 
 // ---------- Burbujas ----------
-export const BurbujaUbicacion: React.FC<{ u: Ubicacion; isMine: boolean; metadata: React.ReactNode }> = ({ u, isMine, metadata }) => (
-  <div className="w-[240px] -mx-1 -mt-0.5">
-    <a
-      href={enlaceMapa(u)}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={(e) => e.stopPropagation()}
-      className="block rounded-[6px] overflow-hidden"
-      aria-label="Abrir la ubicación en el mapa"
-    >
-      <MapaMini lat={u.lat} lng={u.lng} ancho={240} alto={140} />
-    </a>
-    <div className="flex items-end gap-2 px-1 pt-1.5">
-      <span className="flex-1 min-w-0">
-        <span className="flex items-center gap-1 text-sm font-['Inter'] font-medium">
-          <MapPin className="w-4 h-4 shrink-0" strokeWidth={2} /> Ubicación
+const haceCuanto = (ms: number) => {
+  const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 1) return 'ahora';
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m / 60);
+  return `hace ${h} h`;
+};
+const hora = (ms: number) => new Date(ms).toLocaleTimeString('es', { hour: 'numeric', minute: '2-digit' });
+
+export const BurbujaUbicacion: React.FC<{
+  u: Ubicacion;
+  messageId: string;
+  isMine: boolean;
+  metadata: React.ReactNode;
+  onDejar?: () => void;
+}> = ({ u, messageId, isMine, metadata, onDejar }) => {
+  const vivo = useUbicacionVivo(messageId);
+  const enVivo = !!u.vivo;
+  const fin = vivo?.terminaAt ?? u.vivo?.hasta ?? 0;
+  const activa = enVivo && fin > Date.now();
+  const pos = vivo ?? u;
+  const suave = isMine ? 'text-white/85' : 'text-[#5B6670] dark:text-[#E3E7EC]';
+  return (
+    <div className="w-[240px] -mx-1 -mt-0.5">
+      <a
+        href={enlaceMapa(pos)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className={`block rounded-[6px] overflow-hidden relative ${enVivo && !activa ? 'grayscale opacity-80' : ''}`}
+        aria-label="Abrir la ubicación en el mapa"
+      >
+        <MapaMini lat={pos.lat} lng={pos.lng} ancho={240} alto={140} />
+        {activa && (
+          <span className="absolute top-2 left-2 px-2 h-6 rounded-full bg-[#1E9E5A] text-white text-[11px] font-['Inter'] font-semibold flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" /> En vivo
+          </span>
+        )}
+      </a>
+      <div className="flex items-end gap-2 px-1 pt-1.5">
+        <span className="flex-1 min-w-0">
+          <span className="flex items-center gap-1 text-sm font-['Inter'] font-medium">
+            <MapPin className="w-4 h-4 shrink-0" strokeWidth={2} /> {enVivo ? 'Ubicación en vivo' : 'Ubicación'}
+          </span>
+          <span className={`block text-[11px] font-['Inter'] ${suave}`}>
+            {enVivo
+              ? activa
+                ? `Hasta las ${hora(fin)}${vivo ? ` · ${haceCuanto(vivo.actualizado)}` : ''}`
+                : 'Ya no se está compartiendo'
+              : `Toca para abrirlo${u.precision ? ` · ±${Math.round(u.precision)} m` : ''}`}
+          </span>
         </span>
-        <span className={`block text-[11px] font-['Inter'] whitespace-nowrap ${isMine ? 'text-white/85' : 'text-[#5B6670] dark:text-[#E3E7EC]'}`}>
-          Toca para abrirlo{u.precision ? ` · ±${Math.round(u.precision)} m` : ''}
-        </span>
-      </span>
-      {metadata}
+        {metadata}
+      </div>
+      {isMine && activa && onDejar && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDejar();
+          }}
+          className="mt-1.5 -mb-1 w-full h-10 border-t border-white/25 text-sm font-['Poppins'] font-semibold text-white hover:bg-white/10"
+        >
+          Dejar de compartir
+        </button>
+      )}
     </div>
-  </div>
-);
+  );
+};
 
 export const BurbujaContacto: React.FC<{ c: Contacto; isMine: boolean; metadata: React.ReactNode }> = ({ c, isMine, metadata }) => {
   const [copiado, setCopiado] = useState(false);
@@ -152,7 +197,8 @@ const Hoja: React.FC<{ titulo: string; onCerrar: () => void; children: React.Rea
 const botonPrincipal =
   "w-full h-12 rounded-[5px] bg-[#F28C1B] text-[#1F2933] font-['Poppins'] font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50";
 
-export const EnviarUbicacion: React.FC<{ onEnviar: (u: Ubicacion) => void; onCerrar: () => void }> = ({ onEnviar, onCerrar }) => {
+export const EnviarUbicacion: React.FC<{ onEnviar: (u: Ubicacion, vivoSegundos?: number) => void; onCerrar: () => void }> = ({ onEnviar, onCerrar }) => {
+  const [eligiendoVivo, setEligiendoVivo] = useState(false);
   const [u, setU] = useState<Ubicacion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [buscando, setBuscando] = useState(true);
@@ -212,9 +258,39 @@ export const EnviarUbicacion: React.FC<{ onEnviar: (u: Ubicacion) => void; onCer
           Intentar de nuevo
         </button>
       ) : (
-        <button type="button" disabled={!u} onClick={() => u && onEnviar(u)} className={botonPrincipal}>
-          <MapPin className="w-5 h-5" strokeWidth={2} /> Enviar mi ubicación actual
-        </button>
+        <>
+          <button type="button" disabled={!u} onClick={() => u && onEnviar(u)} className={botonPrincipal}>
+            <MapPin className="w-5 h-5" strokeWidth={2} /> Enviar mi ubicación actual
+          </button>
+          {!eligiendoVivo ? (
+            <button
+              type="button"
+              disabled={!u}
+              onClick={() => setEligiendoVivo(true)}
+              className="mt-2 w-full h-12 rounded-[5px] border border-[#1E9E5A] text-[#1E9E5A] dark:text-[#4ADE80] font-['Poppins'] font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <span className="w-2 h-2 rounded-full bg-current animate-pulse" /> Compartir ubicación en tiempo real
+            </button>
+          ) : (
+            <div className="mt-3">
+              <p className="mb-2 text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">
+                ¿Por cuánto tiempo? Se actualiza mientras tengas ChatDos abierto en pantalla.
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {DURACIONES_VIVO.map((d) => (
+                  <button
+                    key={d.seg}
+                    type="button"
+                    onClick={() => u && onEnviar(u, d.seg)}
+                    className="h-11 rounded-[5px] bg-[#1E9E5A] text-white text-sm font-['Poppins'] font-semibold"
+                  >
+                    {d.nombre}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </Hoja>
   );

@@ -40,6 +40,15 @@ export interface MessagePayload {
     lat: number;
     lng: number;
     precision?: number; // metros
+    vivo?: { hasta: number }; // en tiempo real hasta esta hora (ms)
+  };
+  // Vista previa de un enlace (la arma quien envía; quien recibe no visita la página)
+  enlace?: {
+    url: string;
+    titulo?: string;
+    descripcion?: string;
+    sitio?: string;
+    imagen?: string; // miniatura en data:image/jpeg;base64
   };
   // Contacto enviado (tarjeta con nombre y números)
   contacto?: {

@@ -3,6 +3,7 @@
 //   { accion: "enviar", message_id }    -> avisa a la otra persona que llegó un mensaje
 //   { accion: "llamada", chat_id, tipo } -> avisa a la otra persona que la están llamando
 //   { accion: "turn" }                  -> credenciales del servidor de paso para las llamadas
+//   { accion: "enlace", url }           -> vista previa de un enlace (título, descripción e imagen)
 // La notificación NUNCA lleva el texto del mensaje (está cifrado de extremo a extremo):
 // solo dice quién escribió y qué tipo de mensaje es.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -23,6 +24,156 @@ const TIPO: Record<string, string> = {
   video: 'Te envió un video',
   audio: 'Te envió un audio',
 };
+
+// ---------- Vista previa de enlaces ----------
+// Solo páginas públicas: nada de direcciones internas (evita que se use para entrar a redes privadas).
+function direccionPrivada(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || !h.includes('.') && !h.includes(':')) return true;
+  if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.)/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true;
+  if (h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
+  return false;
+}
+
+const entidades = (t: string) =>
+  t
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/\s+/g, ' ')
+    .trim();
+
+function meta(html: string, nombres: string[]): string | undefined {
+  for (const n of nombres) {
+    const re1 = new RegExp(`<meta[^>]+(?:property|name|itemprop)=["']${n}["'][^>]*content=["']([^"']*)["']`, 'i');
+    const re2 = new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name|itemprop)=["']${n}["']`, 'i');
+    const m = html.match(re1) || html.match(re2);
+    if (m && m[1].trim()) return entidades(m[1]);
+  }
+  return undefined;
+}
+
+async function leerLimitado(r: Response, max: number): Promise<Uint8Array> {
+  const lector = r.body?.getReader();
+  if (!lector) return new Uint8Array();
+  const partes: Uint8Array[] = [];
+  let total = 0;
+  while (total < max) {
+    const { done, value } = await lector.read();
+    if (done || !value) break;
+    partes.push(value);
+    total += value.length;
+  }
+  lector.cancel().catch(() => {});
+  const todo = new Uint8Array(Math.min(total, max));
+  let pos = 0;
+  for (const p of partes) {
+    const trozo = p.subarray(0, Math.min(p.length, todo.length - pos));
+    todo.set(trozo, pos);
+    pos += trozo.length;
+    if (pos >= todo.length) break;
+  }
+  return todo;
+}
+
+async function traer(url: URL, acepta: string): Promise<Response | null> {
+  let actual = url;
+  for (let i = 0; i < 4; i++) {
+    if (!/^https?:$/.test(actual.protocol) || direccionPrivada(actual.hostname)) return null;
+    const r = await fetch(actual, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(6000),
+      headers: {
+        // Muchas páginas solo dan la vista previa a los "lectores de enlaces" de las redes sociales
+        'User-Agent': 'Mozilla/5.0 (compatible; ChatDosBot/1.0; +https://temistocle-atencio.github.io/chatdos/) facebookexternalhit/1.1',
+        Accept: acepta,
+        'Accept-Language': 'es,en;q=0.8',
+      },
+    });
+    if (r.status >= 300 && r.status < 400 && r.headers.get('location')) {
+      actual = new URL(r.headers.get('location')!, actual);
+      continue;
+    }
+    return r.ok ? r : null;
+  }
+  return null;
+}
+
+function aBase64(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+async function vistaPrevia(texto: string) {
+  let url: URL;
+  try {
+    url = new URL(texto);
+  } catch {
+    return { error: 'Enlace no válido' };
+  }
+  const r = await traer(url, 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5').catch(() => null);
+  if (!r) return { url: url.href, sitio: url.hostname.replace(/^www\./, '') };
+  const tipo = r.headers.get('content-type') ?? '';
+  let titulo: string | undefined;
+  let descripcion: string | undefined;
+  let sitio: string | undefined;
+  let imagenUrl: string | undefined;
+
+  if (tipo.startsWith('image/')) {
+    imagenUrl = r.url || url.href;
+  } else {
+    const bytes = await leerLimitado(r, 600_000);
+    const juego = (tipo.match(/charset=([\w-]+)/i)?.[1] ?? 'utf-8').toLowerCase();
+    let html: string;
+    try {
+      html = new TextDecoder(juego).decode(bytes);
+    } catch {
+      html = new TextDecoder().decode(bytes);
+    }
+    titulo = meta(html, ['og:title', 'twitter:title']) ?? (html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ? entidades(html.match(/<title[^>]*>([^<]*)<\/title>/i)![1]) : undefined);
+    descripcion = meta(html, ['og:description', 'twitter:description', 'description']);
+    sitio = meta(html, ['og:site_name', 'application-name']);
+    const img = meta(html, ['og:image:secure_url', 'og:image', 'og:image:url', 'twitter:image', 'twitter:image:src', 'image']);
+    if (img) {
+      try {
+        imagenUrl = new URL(img, r.url || url.href).href;
+      } catch {
+        /* imagen con dirección rara */
+      }
+    }
+  }
+
+  // La imagen se trae aquí y se devuelve como datos: así quien recibe no visita la página
+  let imagen: string | undefined;
+  if (imagenUrl) {
+    try {
+      const ri = await traer(new URL(imagenUrl), 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8');
+      const ti = ri?.headers.get('content-type') ?? '';
+      if (ri && ti.startsWith('image/') && !ti.includes('svg')) {
+        const b = await leerLimitado(ri, 3_000_000);
+        if (b.length < 3_000_000) imagen = `data:${ti.split(';')[0]};base64,${aBase64(b)}`;
+      }
+    } catch {
+      /* sin imagen */
+    }
+  }
+
+  const corto = (t: string | undefined, n: number) => (t && t.length > n ? t.slice(0, n - 1) + '…' : t);
+  return {
+    url: url.href,
+    titulo: corto(titulo, 200),
+    descripcion: corto(descripcion, 300),
+    sitio: corto(sitio, 60) ?? url.hostname.replace(/^www\./, ''),
+    imagen,
+  };
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -52,6 +203,12 @@ Deno.serve(async (req) => {
 
     if (cuerpo.accion === 'clave') {
       return responder({ publicKey: llaves.public_key });
+    }
+
+    // ---------- Vista previa de un enlace ----------
+    // Lee la página una vez (sin guardar nada) y devuelve título, descripción, sitio y una imagen pequeña.
+    if (cuerpo.accion === 'enlace') {
+      return responder(await vistaPrevia(String(cuerpo.url ?? '')));
     }
 
     // ---------- Servidor de paso para llamadas (TURN de Cloudflare) ----------
