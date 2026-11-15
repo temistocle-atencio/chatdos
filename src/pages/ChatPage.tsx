@@ -52,6 +52,7 @@ import {
   type Pendiente,
 } from '../lib/offline';
 import { avisarSelectorArchivo } from '../lib/bloqueo';
+import { CamaraChat, duracionGrabada } from '../components/CamaraChat';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { FondoChat } from '../components/FondoChat';
@@ -288,6 +289,7 @@ export const ChatPage: React.FC = () => {
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const videoCameraInputRef = useRef<HTMLInputElement>(null);
+  const [camara, setCamara] = useState<null | 'foto' | 'video'>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<DecryptedMessage[]>([]);
 
@@ -1340,6 +1342,9 @@ export const ChatPage: React.FC = () => {
     if (!forceAudio && file.type.startsWith('video/')) {
       if (file.size > MAX_FILE_BYTES) throw new Error('Un video pesa más de 25 MB. Recórtalo o grábalo más corto.');
       const info = await inspectVideo(file);
+      // Videos grabados en la cámara de ChatDos: algunos navegadores no guardan la duración en el archivo
+      const grabada = duracionGrabada.get(file);
+      if (grabada !== undefined && (!Number.isFinite(info.duration) || !info.duration)) info.duration = grabada;
       if (info.duration > MAX_VIDEO_SECONDS + 0.5) throw new Error('Un video dura más de 2 minutos. Recórtalo antes de enviarlo.');
       return { kind: 'video', blob: file, mime: file.type || 'video/mp4', ...info };
     }
@@ -2503,10 +2508,7 @@ export const ChatPage: React.FC = () => {
                 {!editingMsg && !inputText.trim() && (
                   <button
                     type="button"
-                    onClick={() => {
-                      avisarSelectorArchivo();
-                      fotoVideoInputRef.current?.click();
-                    }}
+                    onClick={() => setCamara('foto')}
                     disabled={!hasPartnerKey || preparing}
                     className="w-10 h-11 shrink-0 flex items-center justify-center text-[#5B6670] hover:text-[#005198] dark:text-[#E3E7EC] dark:hover:text-white transition-colors disabled:opacity-50"
                     title="Cámara"
@@ -2665,12 +2667,12 @@ export const ChatPage: React.FC = () => {
             galleryInputRef.current?.click();
           }}
           onCamera={() => {
-            avisarSelectorArchivo();
-            cameraInputRef.current?.click();
+            setAttachOpen(false);
+            setCamara('foto');
           }}
           onVideoCamera={() => {
-            avisarSelectorArchivo();
-            videoCameraInputRef.current?.click();
+            setAttachOpen(false);
+            setCamara('video');
           }}
           onAudioFile={() => {
             avisarSelectorArchivo();
@@ -2799,6 +2801,30 @@ export const ChatPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {camara && (
+        <CamaraChat
+          modoInicial={camara}
+          onCerrar={() => setCamara(null)}
+          onListo={(archivos) => {
+            setCamara(null);
+            void handleFilePicked(archivos);
+          }}
+          onGaleria={() => {
+            setCamara(null);
+            avisarSelectorArchivo();
+            galleryInputRef.current?.click();
+          }}
+          onSinCamara={() => {
+            // El navegador no deja usar la cámara aquí: se abre la del celular
+            setToast('No se pudo abrir la cámara aquí. Revisa el permiso de cámara del navegador.');
+            const modo = camara;
+            setCamara(null);
+            avisarSelectorArchivo();
+            (modo === 'video' ? videoCameraInputRef : fotoVideoInputRef).current?.click();
+          }}
+        />
       )}
 
       {pendingMedia && (

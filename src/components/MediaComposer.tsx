@@ -103,7 +103,14 @@ export const MediaComposer: React.FC<{
 
       <div className="flex-1 min-h-0 flex items-center justify-center p-3">
         {url && media.kind === 'image' && <img src={url} alt="Vista previa" className="max-w-full max-h-full object-contain" />}
-        {url && media.kind === 'video' && <video key={url} src={url} controls playsInline className="max-w-full max-h-full" />}
+        {url && media.kind === 'video' && (
+          <div className="relative max-w-full max-h-full flex items-center justify-center">
+            <video key={url} src={url} controls playsInline className="max-w-full max-h-[calc(100dvh-220px)]" />
+            <span className="absolute top-2 left-2 px-3 h-7 rounded-full bg-black/55 text-white text-xs font-['Inter'] flex items-center gap-1.5">
+              {formatDuration(media.duration || 0)} <span aria-hidden>•</span> {formatBytes(media.blob.size)}
+            </span>
+          </div>
+        )}
         {url && media.kind === 'audio' && (
           <div className="w-full max-w-sm bg-white dark:bg-[#253240] rounded-[5px] p-4 shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
             <div className="flex items-center gap-2 mb-3 text-[#1F2933] dark:text-white">
@@ -157,7 +164,7 @@ export const MediaComposer: React.FC<{
             type="text"
             value={caption}
             onChange={(e) => setCaption(e.target.value.slice(0, 1000))}
-            placeholder={varios ? 'Mensaje para la primera foto...' : 'Añade un mensaje...'}
+            placeholder={varios ? 'Comentario para la primera foto…' : 'Añade un comentario…'}
             className="flex-1 min-w-0 h-12 px-3 rounded-[5px] bg-white dark:bg-[#253240] text-[16px] font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#E3E7EC] border border-[#C9CFD6] dark:border-[#003A73] focus:outline-2 focus:outline-[#005198]"
           />
         ) : (
