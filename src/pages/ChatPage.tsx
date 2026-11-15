@@ -318,6 +318,9 @@ export const ChatPage: React.FC = () => {
   const [arrastre, setArrastre] = useState({ x: 0, y: 0 });
   const pulsacion = useRef<{ id: number; x: number; y: number; t: number; soltado: boolean } | null>(null);
   const ignorarClick = useRef(false);
+  // Dedo que bloqueó o canceló la grabación y aún no se ha levantado: su "soltar"
+  // no debe enviar nada, pero después hay que volver a aceptar toques.
+  const dedoPendiente = useRef<number | null>(null);
   const fotoVideoInputRef = useRef<HTMLInputElement>(null);
   const retryRef = useRef<Map<string, { media: PendingMedia; payload: MessagePayload; viewOnce: boolean; replyId: string | null; fileKey?: string }>>(new Map());
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -1729,15 +1732,17 @@ export const ChatPage: React.FC = () => {
     const dx = Math.min(0, e.clientX - p.x);
     const dy = Math.min(0, e.clientY - p.y);
     if (dx < -110) {
+      dedoPendiente.current = p.id;
+      ignorarClick.current = true;
       cancelRecording();
       navigator.vibrate?.(15);
-      ignorarClick.current = true;
       return;
     }
     if (dy < -80) {
       setGesto('bloqueado');
       setArrastre({ x: 0, y: 0 });
       pulsacion.current = null;
+      dedoPendiente.current = p.id;
       ignorarClick.current = true;
       navigator.vibrate?.(15);
       return;
@@ -1746,6 +1751,13 @@ export const ChatPage: React.FC = () => {
   };
 
   const alSoltarMic = (e: React.PointerEvent<HTMLButtonElement>) => {
+    // Se levantó el dedo que bloqueó o canceló: se ignora este toque y se vuelve a
+    // aceptar el siguiente (si no, el botón "Enviar audio" quedaba sin responder).
+    if (dedoPendiente.current === e.pointerId) {
+      dedoPendiente.current = null;
+      setTimeout(() => (ignorarClick.current = false), 400);
+      return;
+    }
     const p = pulsacion.current;
     if (!p || p.id !== e.pointerId) return;
     ignorarClick.current = true;
@@ -2671,8 +2683,8 @@ export const ChatPage: React.FC = () => {
                   type="button"
                   onPointerDown={esMic && canUse ? alPresionarMic : undefined}
                   onPointerMove={esMic ? alMoverMic : undefined}
-                  onPointerUp={esMic ? alSoltarMic : undefined}
-                  onPointerCancel={esMic ? alSoltarMic : undefined}
+                  onPointerUp={alSoltarMic}
+                  onPointerCancel={alSoltarMic}
                   onContextMenu={(e) => esMic && e.preventDefault()}
                   onClick={(e) => {
                     if (ignorarClick.current) return;
