@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { formatDuration } from '../lib/media';
 
 // Barras de sonido mientras se graba una nota de voz (como WhatsApp):
 // cada ~90 ms entra una barra nueva por la derecha con el volumen del micrófono
@@ -67,3 +68,15 @@ const OndaEnVivo: React.FC<Props> = ({ nivel, className = '', style }) => {
 };
 
 export default OndaEnVivo;
+
+/** Reloj de la grabación (se actualiza solo, sin volver a dibujar el chat) */
+export const TiempoGrabacion: React.FC<{ segundos: () => number }> = ({ segundos }) => {
+  const leer = useRef(segundos);
+  leer.current = segundos;
+  const [s, setS] = useState(() => Math.floor(segundos()));
+  useEffect(() => {
+    const t = setInterval(() => setS(Math.floor(leer.current())), 250);
+    return () => clearInterval(t);
+  }, []);
+  return <>{formatDuration(s)}</>;
+};

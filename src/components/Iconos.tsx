@@ -135,7 +135,7 @@ export const IconoUbicacionColor: React.FC<P> = ({ className }) => (
 /** Ver una vez: un "1" dentro de un círculo, media línea y media de puntos (toma el color del texto) */
 export const IconoVerUnaVez: React.FC<P> = ({ className }) => (
   <svg viewBox="0 0 100 100" className={className} fill="none" aria-hidden="true">
-    <path d="M 44.57 11.38 A 39 39 0 1 0 44.57 88.62" stroke="currentColor" strokeWidth="7.6" strokeLinecap="round" />
+    <path d="M 44.57 11.38 A 39 39 0 0 0 44.57 88.62" stroke="currentColor" strokeWidth="7.6" strokeLinecap="round" />
     <path d="M 40.8 32.5 H 49.5 V 67.5" stroke="currentColor" strokeWidth="7.6" strokeLinecap="round" strokeLinejoin="round" />
     <g fill="currentColor">
       <circle cx="54.08" cy="11.21" r="3.8" />

@@ -54,7 +54,7 @@ import { pedirVistaPrevia, primerEnlace, type VistaEnlace } from '../lib/enlaces
 import { VistaPreviaEscribiendo } from '../components/TarjetaEnlace';
 import { cargarUbicacionesVivo, compartir, dejarDeCompartir, retomarEnChat, useCompartiendoEn } from '../lib/ubicacionVivo';
 import { IconoCamara, IconoClip, IconoStickerCara, IconoVerUnaVez, IconoVerUnaVezActivo } from '../components/Iconos';
-import OndaEnVivo from '../components/OndaEnVivo';
+import OndaEnVivo, { TiempoGrabacion } from '../components/OndaEnVivo';
 import { PanelExpresiones, type PestanaExpresiones } from '../components/PanelExpresiones';
 import { FotoPerfilVisor } from '../components/FotoPerfilVisor';
 import { FondoChat } from '../components/FondoChat';
@@ -310,13 +310,20 @@ export const ChatPage: React.FC = () => {
     loading?: boolean;
   } | null>(null);
   const [recording, setRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
   const [recordViewOnce, setRecordViewOnce] = useState(false);
   const recorderRef = useRef<VoiceRecorder | null>(null);
   // Mantener presionado para grabar (como WhatsApp): soltar = enviar, izquierda = cancelar, arriba = candado
   const [gesto, setGesto] = useState<'no' | 'mantener' | 'bloqueado'>('no');
-  const [arrastre, setArrastre] = useState({ x: 0, y: 0 });
-  const pulsacion = useRef<{ id: number; x: number; y: number; t: number; soltado: boolean } | null>(null);
+  // Arrastre del dedo mientras se graba: va directo a variables CSS de la barra de abajo
+  // (sin estado de React), para no volver a dibujar todo el chat en cada movimiento.
+  const barraAbajoRef = useRef<HTMLDivElement>(null);
+  const moverArrastre = (dx: number, dy: number) => {
+    const b = barraAbajoRef.current;
+    if (!b) return;
+    b.style.setProperty('--dx', String(dx));
+    b.style.setProperty('--dy', String(dy));
+  };
+  const pulsacion = useRef<{ id: number; x: number; y: number; t: number; soltado: boolean; cancelado?: boolean } | null>(null);
   const ignorarClick = useRef(false);
   const fotoVideoInputRef = useRef<HTMLInputElement>(null);
   const retryRef = useRef<Map<string, { media: PendingMedia; payload: MessagePayload; viewOnce: boolean; replyId: string | null; fileKey?: string }>>(new Map());
@@ -1708,12 +1715,12 @@ export const ChatPage: React.FC = () => {
     }
     recorderRef.current = rec;
     setRecordViewOnce(false);
-    setRecordSeconds(0);
     setRecording(true);
     return true;
   };
 
   const nivelMicrofono = useCallback(() => recorderRef.current?.nivel() ?? 0, []);
+  const segundosGrabados = useCallback(() => recorderRef.current?.elapsed() ?? 0, []);
 
   const cancelRecording = () => {
     recorderRef.current?.cancel();
@@ -1728,19 +1735,25 @@ export const ChatPage: React.FC = () => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (recording || pulsacion.current) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    pulsacion.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), soltado: false };
-    setArrastre({ x: 0, y: 0 });
+    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), soltado: false, cancelado: false };
+    pulsacion.current = p;
+    moverArrastre(0, 0);
+    // La vista de "grabando" sale de una vez; el micrófono termina de encender por detrás
     setGesto('mantener');
     navigator.vibrate?.(25);
     const ok = await startRecording();
-    const p = pulsacion.current;
     if (!ok) {
       setGesto('no');
-      pulsacion.current = null;
+      if (pulsacion.current === p) pulsacion.current = null;
+      return;
+    }
+    // Se deslizó para cancelar mientras el micrófono encendía
+    if (p.cancelado) {
+      cancelRecording();
       return;
     }
     // Se soltó mientras el micrófono encendía (por ejemplo, salió el aviso de permiso)
-    if (!p || p.soltado) {
+    if (p.soltado) {
       cancelRecording();
       setToast('Mantén presionado el micrófono para grabar y suelta para enviar.');
     }
@@ -1767,6 +1780,7 @@ export const ChatPage: React.FC = () => {
     const dx = Math.min(0, e.clientX - p.x);
     const dy = Math.min(0, e.clientY - p.y);
     if (dx < -110) {
+      p.cancelado = true;
       esperarSoltar(p.id);
       cancelRecording();
       navigator.vibrate?.(15);
@@ -1774,13 +1788,13 @@ export const ChatPage: React.FC = () => {
     }
     if (dy < -80) {
       setGesto('bloqueado');
-      setArrastre({ x: 0, y: 0 });
+      moverArrastre(0, 0);
       pulsacion.current = null;
       esperarSoltar(p.id);
       navigator.vibrate?.(15);
       return;
     }
-    setArrastre({ x: dx, y: dy });
+    moverArrastre(dx, dy);
   };
 
   const alSoltarMic = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -1817,16 +1831,16 @@ export const ChatPage: React.FC = () => {
     sendMedia({ kind: 'audio', blob, mime, duration, music: false }, '', recordViewOnce);
   };
 
-  // Reloj de la grabación y corte automático a los 5 minutos
+  // Corte automático a los 5 minutos. El reloj en pantalla lo lleva <TiempoGrabacion>,
+  // así el chat no se vuelve a dibujar cada cuarto de segundo mientras se graba.
+  const finishRef = useRef(finishRecording);
+  finishRef.current = finishRecording;
   useEffect(() => {
     if (!recording) return;
     const t = setInterval(() => {
-      const s = recorderRef.current?.elapsed() || 0;
-      setRecordSeconds(s);
-      if (s >= MAX_AUDIO_SECONDS) finishRecording();
-    }, 250);
+      if ((recorderRef.current?.elapsed() || 0) >= MAX_AUDIO_SECONDS) finishRef.current();
+    }, 500);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recording]);
 
   // Si se sale del chat grabando, se apaga el micrófono
@@ -2519,6 +2533,7 @@ export const ChatPage: React.FC = () => {
 
       {/* 5. Barra inferior de entrada de texto */}
       <div
+        ref={barraAbajoRef}
         className={`relative px-2 pt-2 shrink-0 ${imagenFondo ? 'bg-transparent' : 'bg-[#F2F4F7] dark:bg-[#1F2933] border-t border-[#E3E7EC] dark:border-[#003A73]'}`}
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
       >
@@ -2560,12 +2575,12 @@ export const ChatPage: React.FC = () => {
             </button>
           </div>
         )}
-        {recording && gesto !== 'mantener' ? (
+        {gesto === 'bloqueado' || (recording && gesto !== 'mantener') ? (
           /* Grabación con candado (como WhatsApp): arriba tiempo, sonido y "ver una vez"; abajo borrar y enviar */
           <div className="bg-white dark:bg-[#253240] rounded-[22px] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_1px_3px_rgba(0,0,0,0.08)] px-3 pt-2.5 pb-3">
             <div className="flex items-center gap-3 h-11">
               <span className="w-12 shrink-0 text-[17px] font-['Inter'] tabular-nums text-[#1F2933] dark:text-white">
-                {formatDuration(recordSeconds)}
+                <TiempoGrabacion segundos={segundosGrabados} />
               </span>
               <OndaEnVivo nivel={nivelMicrofono} className="flex-1 min-w-0 text-[#5B6670] dark:text-[#C9CFD6]" />
               <button
@@ -2615,20 +2630,22 @@ export const ChatPage: React.FC = () => {
         <div className="flex items-end gap-1.5">
           {/* Cápsula: expresiones · texto · adjuntar · cámara (como WhatsApp) */}
           <div className="flex-1 min-w-0 flex items-end bg-white dark:bg-[#253240] rounded-[22px] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_1px_3px_rgba(0,0,0,0.08)] px-1 min-h-11 overflow-hidden">
-            {recording && gesto === 'mantener' ? (
+            {gesto === 'mantener' ? (
               <>
                 {/* Grabando con el dedo presionado: deslizar a la izquierda cancela */}
                 <div className="flex-1 flex items-center gap-2 pl-3 h-11 text-sm font-['Inter'] text-[#1F2933] dark:text-white">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#D64545] animate-pulse shrink-0" aria-hidden="true" />
-                  <span className="tabular-nums">{formatDuration(recordSeconds)}</span>
+                  <span className="tabular-nums">
+                    <TiempoGrabacion segundos={segundosGrabados} />
+                  </span>
                   <OndaEnVivo
                     nivel={nivelMicrofono}
                     className="flex-1 min-w-0 text-[#5B6670] dark:text-[#C9CFD6]"
-                    style={{ opacity: Math.max(0, 1 + arrastre.x / 80) }}
+                    style={{ opacity: 'max(0, calc(1 + var(--dx, 0) / 80))' }}
                   />
                   <span
                     className="mr-2 shrink-0 flex items-center gap-0.5 text-xs text-[#5B6670] dark:text-[#E3E7EC] whitespace-nowrap"
-                    style={{ transform: `translateX(${arrastre.x * 0.6}px)`, opacity: Math.max(0.25, 1 + arrastre.x / 140) }}
+                    style={{ transform: 'translateX(calc(var(--dx, 0) * 0.6px))', opacity: 'max(0.25, calc(1 + var(--dx, 0) / 140))' }}
                   >
                     <FlechaIzq className="w-4 h-4" strokeWidth={2} /> Desliza para cancelar
                   </span>
@@ -2708,7 +2725,7 @@ export const ChatPage: React.FC = () => {
           {/* Botón redondo (el único naranja): con texto = enviar; sin texto = mantener para grabar; candado = enviar audio */}
           {(() => {
             const canUse = hasPartnerKey;
-            const mode = recording && gesto !== 'mantener' ? 'sendAudio' : recording ? 'holding' : hasInputText || editingMsg ? 'send' : 'mic';
+            const mode = gesto === 'mantener' ? 'holding' : recording ? 'sendAudio' : hasInputText || editingMsg ? 'send' : 'mic';
             const label =
               mode === 'sendAudio'
                 ? 'Enviar audio'
@@ -2722,10 +2739,10 @@ export const ChatPage: React.FC = () => {
             return (
               <div className="relative shrink-0">
                 {/* Candado: deslizar hacia arriba para seguir grabando sin el dedo */}
-                {gesto === 'mantener' && recording && (
+                {gesto === 'mantener' && (
                   <div
                     className="absolute bottom-[60px] left-1/2 -translate-x-1/2 w-10 py-2 rounded-full bg-white dark:bg-[#253240] border border-[#E3E7EC] dark:border-[#003A73] shadow-[0_2px_8px_rgba(0,0,0,0.15)] flex flex-col items-center gap-1 text-[#5B6670] dark:text-[#E3E7EC] pointer-events-none"
-                    style={{ transform: `translate(-50%, ${arrastre.y * 0.5}px)` }}
+                    style={{ transform: 'translate(-50%, calc(var(--dy, 0) * 0.5px))' }}
                     aria-hidden="true"
                   >
                     <Lock className="w-4 h-4" strokeWidth={2} />
