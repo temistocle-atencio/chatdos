@@ -13,6 +13,7 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 import { Logo } from './Logo';
+import { PantallaCarga } from './PantallaCarga';
 import { PWAInstallButton } from './PWAInstallButton';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -193,7 +194,7 @@ export const AppLayout: React.FC = () => {
 
       {/* Contenido principal: en chat ocupa todo el alto sin márgenes exteriores para cabecera limpia */}
       <main className={`flex-1 w-full mx-auto flex flex-col ${isChatRoute ? 'p-0 h-full min-h-0 overflow-hidden' : 'max-w-md px-4 py-4'}`}>
-        <Suspense fallback={<div className="flex-1 bg-[#F2F4F7] dark:bg-[#1F2933]" />}>
+        <Suspense fallback={<PantallaCarga />}>
           <Outlet />
         </Suspense>
       </main>
