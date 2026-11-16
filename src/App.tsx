@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -6,9 +6,36 @@ import { AppLayout } from './components/AppLayout';
 import { ProtectedRoute, PublicOnlyRoute } from './components/ProtectedRoute';
 import { LoginPage } from './pages/LoginPage';
 import { ChatsPage } from './pages/ChatsPage';
-import { InvitarPage } from './pages/InvitarPage';
-import { InvitadoDetallePage } from './pages/InvitadoDetallePage';
-import { ChatPage } from './pages/ChatPage';
+
+// Las pantallas menos usadas se cargan solo cuando se abren: así la app arranca más rápido.
+// El chat se deja listo apenas la app abre (ver más abajo), para que entrar a una conversación sea inmediato.
+// Si una parte de la app ya no existe (se publicó una versión nueva), se recarga una vez para traer la nueva
+function conRecarga<T>(cargar: () => Promise<T>): () => Promise<T> {
+  return () =>
+    cargar().catch((e) => {
+      if (!sessionStorage.getItem('chatdos:recargaParte')) {
+        sessionStorage.setItem('chatdos:recargaParte', '1');
+        location.reload();
+        return new Promise<T>(() => {});
+      }
+      throw e;
+    });
+}
+setTimeout(() => sessionStorage.removeItem('chatdos:recargaParte'), 10000);
+const cargarChat = conRecarga(() => import('./pages/ChatPage'));
+const ChatPage = lazy(() => cargarChat().then((m) => ({ default: m.ChatPage })));
+const InvitarPage = lazy(() => conRecarga(() => import('./pages/InvitarPage'))().then((m) => ({ default: m.InvitarPage })));
+const InvitadoDetallePage = lazy(() => conRecarga(() => import('./pages/InvitadoDetallePage'))().then((m) => ({ default: m.InvitadoDetallePage })));
+const PerfilPage = lazy(() => conRecarga(() => import('./pages/PerfilPage'))().then((m) => ({ default: m.PerfilPage })));
+const AjustesPage = lazy(() => conRecarga(() => import('./pages/AjustesPage'))().then((m) => ({ default: m.AjustesPage })));
+const CrearLlavePage = lazy(() => conRecarga(() => import('./pages/CrearLlavePage'))().then((m) => ({ default: m.CrearLlavePage })));
+const RecuperarLlavePage = lazy(() => conRecarga(() => import('./pages/RecuperarLlavePage'))().then((m) => ({ default: m.RecuperarLlavePage })));
+const PruebaCifradoPage = lazy(() => conRecarga(() => import('./pages/PruebaCifradoPage'))().then((m) => ({ default: m.PruebaCifradoPage })));
+
+// Apenas la app termina de abrir, se deja listo el chat por detrás
+const listo = () => setTimeout(() => void cargarChat().catch(() => {}), 300);
+if (document.readyState === 'complete') listo();
+else addEventListener('load', listo, { once: true });
 import { useParams } from 'react-router-dom';
 
 // Cada chat abre su propia pantalla: así nunca se mezcla la llave de un chat con la de otro
@@ -17,11 +44,6 @@ const ChatPorId: React.FC = () => {
   const { chatId } = useParams();
   return <ChatPage key={chatId} />;
 };
-import { PerfilPage } from './pages/PerfilPage';
-import { AjustesPage } from './pages/AjustesPage';
-import { CrearLlavePage } from './pages/CrearLlavePage';
-import { RecuperarLlavePage } from './pages/RecuperarLlavePage';
-import { PruebaCifradoPage } from './pages/PruebaCifradoPage';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { AppLock } from './components/AppLock';
 import { AvisoClave } from './components/AvisoClave';
@@ -29,7 +51,7 @@ import { RevisarLlave } from './components/RevisarLlave';
 import { InstalarIOS } from './components/InstalarIOS';
 import { Llamadas } from './components/Llamadas';
 import { AvisoNavegadorInterno } from './components/AvisoNavegadorInterno';
-import { Logo } from './components/Logo';
+import { PantallaCarga } from './components/PantallaCarga';
 import { hasLocalPrivateKey } from './lib/crypto';
 import { memoria } from './lib/memoria';
 
@@ -65,11 +87,7 @@ const RootRedirect: React.FC = () => {
   }, [user, profile, isAdmin, loading]);
 
   if (loading || !destination) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#F2F4F7] dark:bg-[#1F2933]">
-        <Logo variant="color" layout="vertical" cubeHeight={44} className="mb-4 animate-pulse" />
-      </div>
-    );
+    return <PantallaCarga />;
   }
 
   return <Navigate to={destination} replace />;

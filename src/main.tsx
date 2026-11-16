@@ -21,8 +21,34 @@ if (enPaginaCompartida) {
   }
 }
 
-// Registro automático del service worker para capacidades PWA y caché offline
-registerSW({ immediate: true });
+// Service worker (app sin internet y avisos).
+// Las versiones nuevas se descargan por detrás y SOLO se aplican en un momento seguro:
+// apenas se abre la app (antes de tocar nada) o al volver después de un buen rato fuera.
+// Antes se recargaba sola en cualquier momento, y eso dejaba la pantalla en blanco o negra.
+const inicio = Date.now();
+let ocultaDesde = 0;
+let hayVersionNueva = false;
+let tocoAlgo = false;
+const aplicar = registerSW({
+  immediate: true,
+  onNeedRefresh() {
+    hayVersionNueva = true;
+    if (Date.now() - inicio < 4000 && !tocoAlgo) void aplicar(true);
+  },
+  onRegisteredSW(_url, r) {
+    // Revisar si hay versión nueva cada 30 minutos con la app abierta
+    if (r) setInterval(() => !document.hidden && r.update().catch(() => {}), 30 * 60 * 1000);
+  },
+});
+addEventListener('pointerdown', () => (tocoAlgo = true), { once: true, capture: true });
+addEventListener('keydown', () => (tocoAlgo = true), { once: true, capture: true });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    ocultaDesde = Date.now();
+    return;
+  }
+  if (hayVersionNueva && ocultaDesde && Date.now() - ocultaDesde > 10 * 60 * 1000) void aplicar(true);
+});
 unlockSound();
 setTimeout(() => {
   refreshPushSubscription();
