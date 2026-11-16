@@ -2,6 +2,7 @@
 // - Los mensajes se guardan TAL CUAL vienen del servidor: cifrados.
 // - La "bandeja de salida" guarda los mensajes escritos sin señal para enviarlos al volver.
 import type { DbMessage } from '../types/chat';
+import { abrirIDB } from './abrirIDB';
 import type { Profile } from '../types/database';
 
 const DB_NAME = 'chatdos_offline';
@@ -12,26 +13,20 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 
 function abrir(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains('chats')) db.createObjectStore('chats', { keyPath: 'chatId' });
-      if (!db.objectStoreNames.contains('messages')) {
-        const s = db.createObjectStore('messages', { keyPath: 'id' });
-        s.createIndex('chat', 'chat_id');
-      }
-      if (!db.objectStoreNames.contains('outbox')) {
-        const s = db.createObjectStore('outbox', { keyPath: 'id' });
-        s.createIndex('chat', 'chatId');
-      }
-      if (!db.objectStoreNames.contains('misc')) db.createObjectStore('misc');
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => {
-      dbPromise = null;
-      reject(req.error);
-    };
+  dbPromise = abrirIDB(DB_NAME, DB_VERSION, (db) => {
+    if (!db.objectStoreNames.contains('chats')) db.createObjectStore('chats', { keyPath: 'chatId' });
+    if (!db.objectStoreNames.contains('messages')) {
+      const s = db.createObjectStore('messages', { keyPath: 'id' });
+      s.createIndex('chat', 'chat_id');
+    }
+    if (!db.objectStoreNames.contains('outbox')) {
+      const s = db.createObjectStore('outbox', { keyPath: 'id' });
+      s.createIndex('chat', 'chatId');
+    }
+    if (!db.objectStoreNames.contains('misc')) db.createObjectStore('misc');
+  }).catch((e) => {
+    dbPromise = null;
+    throw e;
   });
   return dbPromise;
 }
@@ -43,8 +38,13 @@ const pedir = <T,>(r: IDBRequest<T>) =>
   });
 
 async function tienda(nombre: string, modo: IDBTransactionMode = 'readonly') {
-  const db = await abrir();
-  return db.transaction(nombre, modo).objectStore(nombre);
+  try {
+    return (await abrir()).transaction(nombre, modo).objectStore(nombre);
+  } catch {
+    // iPhone a veces cierra la conexión cuando la app estuvo un rato en segundo plano: se abre de nuevo
+    dbPromise = null;
+    return (await abrir()).transaction(nombre, modo).objectStore(nombre);
+  }
 }
 
 /** Cualquier error de la copia local se ignora: nunca debe romper la app. */

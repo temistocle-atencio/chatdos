@@ -1,39 +1,36 @@
 // Gestión de IndexedDB nativo para almacenar llaves criptográficas no extraíbles
+import { abrirIDB } from './abrirIDB';
+
 const DB_NAME = 'chatdos_keystore';
 const DB_VERSION = 1;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
-function openCryptoDb(): Promise<IDBDatabase> {
+function abrirCache(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
 
-  dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-
-      // Almacén de llave privada del usuario actual (indexado por user_id)
-      if (!db.objectStoreNames.contains('keys')) {
-        db.createObjectStore('keys', { keyPath: 'user_id' });
-      }
-
-      // Almacén de llaves públicas conocidas de compañeros (para detectar cambios de llave)
-      if (!db.objectStoreNames.contains('partner_keys')) {
-        db.createObjectStore('partner_keys', { keyPath: 'partner_id' });
-      }
-    };
-
-    request.onsuccess = (event) => {
-      resolve((event.target as IDBOpenDBRequest).result);
-    };
-
-    request.onerror = (event) => {
-      reject((event.target as IDBOpenDBRequest).error);
-    };
+  dbPromise = abrirIDB(DB_NAME, DB_VERSION, (db) => {
+    // Almacén de llave privada del usuario actual (indexado por user_id)
+    if (!db.objectStoreNames.contains('keys')) db.createObjectStore('keys', { keyPath: 'user_id' });
+    // Almacén de llaves públicas conocidas de compañeros (para detectar cambios de llave)
+    if (!db.objectStoreNames.contains('partner_keys')) db.createObjectStore('partner_keys', { keyPath: 'partner_id' });
+  }).catch((e) => {
+    dbPromise = null; // la próxima vez se intenta de nuevo
+    throw e;
   });
-
   return dbPromise;
+}
+
+/** La conexión lista para usar. Si iPhone la cerró mientras la app estaba en segundo plano, se abre de nuevo. */
+async function openCryptoDb(): Promise<IDBDatabase> {
+  const db = await abrirCache();
+  try {
+    db.transaction('keys', 'readonly');
+    return db;
+  } catch {
+    dbPromise = null;
+    return abrirCache();
+  }
 }
 
 export async function loadLocalPrivateKey(userId: string): Promise<CryptoKey | null> {
