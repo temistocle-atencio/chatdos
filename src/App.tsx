@@ -52,6 +52,7 @@ import { InstalarIOS } from './components/InstalarIOS';
 import { Llamadas } from './components/Llamadas';
 import { AvisoNavegadorInterno } from './components/AvisoNavegadorInterno';
 import { PantallaCarga } from './components/PantallaCarga';
+import { RedDeSeguridad } from './components/RedDeSeguridad';
 import { hasLocalPrivateKey } from './lib/crypto';
 import { memoria } from './lib/memoria';
 
@@ -95,6 +96,7 @@ const RootRedirect: React.FC = () => {
 
 export default function App() {
   return (
+    <RedDeSeguridad>
     <ThemeProvider>
       <AuthProvider>
         <HashRouter>
@@ -207,5 +209,6 @@ export default function App() {
         </HashRouter>
       </AuthProvider>
     </ThemeProvider>
+    </RedDeSeguridad>
   );
 }
