@@ -2372,6 +2372,10 @@ export const ChatPage: React.FC = () => {
         </span>
       );
     }
+    // Si todavía no ha entrado ni una vez, no tiene llave: no se muestra "hace un momento" (era la hora en que se creó la cuenta)
+    if (partner && !partner.public_key) {
+      return <span className="text-white/75 text-[11px] font-['Inter'] truncate">aún no ha entrado a ChatDos</span>;
+    }
     if (partner?.last_seen) {
       return (
         <span className="text-white/75 text-[11px] font-['Inter'] truncate">
@@ -3286,7 +3290,7 @@ export const ChatPage: React.FC = () => {
                     setPanel(null);
                     if (isNearBottom()) setTimeout(scrollToBottom, 300);
                   }}
-                  placeholder={hasPartnerKey ? 'Mensaje' : 'Esperando a que la otra persona active su llave...'}
+                  placeholder={hasPartnerKey ? 'Mensaje' : 'Podrás escribir cuando entre por primera vez'}
                   disabled={!hasPartnerKey}
                   onPaste={alPegar}
                   className="flex-1 min-w-0 max-h-28 py-[10px] px-1 bg-transparent text-[16px] md:text-sm leading-[22px] font-['Inter'] text-[#1F2933] dark:text-white placeholder-[#5B6670] dark:placeholder-[#C9CFD6] resize-none focus:outline-none"
