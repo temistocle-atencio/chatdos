@@ -11,7 +11,8 @@ export default defineConfig(() => {
       react(),
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        // Las versiones nuevas se instalan por detrás y se aplican al abrir la app (nunca recargan en plena conversación)
+        registerType: 'prompt',
         includeAssets: [
           'favicon.svg',
           'icon.svg',

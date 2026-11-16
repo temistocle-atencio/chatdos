@@ -22,10 +22,31 @@
     <!-- Fuentes oficiales según el Manual de Marca: Poppins e Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" />
+    <!-- Las fuentes no frenan la apertura: la app se ve de una vez y las letras se cambian cuando llegan -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@500;600;700&display=swap" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+
+    <!-- Tema claro u oscuro desde el primer instante (sin pantalla negra ni parpadeo) -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('chatdos_theme');
+          var oscuro = t === 'dark' || ((!t || t === 'system') && matchMedia('(prefers-color-scheme: dark)').matches);
+          if (oscuro) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      html, body { margin: 0; background: #F2F4F7; }
+      html.dark, html.dark body { background: #1F2933; }
+      #arranque { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+      #arranque img { width: 72px; height: 72px; border-radius: 16px; animation: latido 1.4s ease-in-out infinite; }
+      @keyframes latido { 50% { opacity: .55; transform: scale(.96); } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Lo que se ve mientras abre la app (React lo reemplaza apenas está lista) -->
+    <div id="root"><div id="arranque"><img src="icon.svg" alt="ChatDos" /></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
