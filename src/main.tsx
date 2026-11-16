@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import './hooks/usePWAInstall'; // escucha desde el inicio el aviso de "se puede instalar"
 import { registerSW } from 'virtual:pwa-register';
 import { refreshPushSubscription, unlockSound, updateBadge } from './lib/push';
 
