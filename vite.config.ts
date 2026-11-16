@@ -29,6 +29,8 @@ export default defineConfig(() => {
           theme_color: '#003A73',
           background_color: '#F2F4F7',
           display: 'standalone',
+          // Para que Chrome pueda saber si la app ya está instalada en el celular
+          related_applications: [{ platform: 'webapp', url: 'https://temistocle-atencio.github.io/chatdos/manifest.webmanifest' }],
           start_url: '/chatdos/',
           lang: 'es',
           scope: '/chatdos/',
