@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { hasLocalPrivateKey } from '../lib/crypto';
-import { Logo } from './Logo';
+import { PantallaCarga } from './PantallaCarga';
 import { memoria } from '../lib/memoria';
 
 interface ProtectedRouteProps {
@@ -76,14 +76,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, adminO
   }, [user, profile, location.pathname]);
 
   if (loading || checkingKey) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#F2F4F7] dark:bg-[#1F2933]">
-        <Logo variant="color" layout="vertical" cubeHeight={44} className="mb-4 animate-pulse" />
-        <p className="text-xs font-['Inter'] text-[#5B6670] dark:text-[#E3E7EC]">
-          Verificando seguridad...
-        </p>
-      </div>
-    );
+    return <PantallaCarga texto="Verificando seguridad..." />;
   }
 
   if (!user) {
@@ -113,11 +106,7 @@ export const PublicOnlyRoute: React.FC<{ children: React.ReactNode }> = ({ child
   }, [user, isAdmin]);
 
   if (loading || checkingChat) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#F2F4F7] dark:bg-[#1F2933]">
-        <Logo variant="color" layout="vertical" cubeHeight={44} className="mb-4 animate-pulse" />
-      </div>
-    );
+    return <PantallaCarga />;
   }
 
   if (user && targetPath) {

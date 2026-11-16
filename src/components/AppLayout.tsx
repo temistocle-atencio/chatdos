@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { Suspense, useState, useRef, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import {
   MoreVertical,
@@ -193,7 +193,9 @@ export const AppLayout: React.FC = () => {
 
       {/* Contenido principal: en chat ocupa todo el alto sin márgenes exteriores para cabecera limpia */}
       <main className={`flex-1 w-full mx-auto flex flex-col ${isChatRoute ? 'p-0 h-full min-h-0 overflow-hidden' : 'max-w-md px-4 py-4'}`}>
-        <Outlet />
+        <Suspense fallback={<div className="flex-1 bg-[#F2F4F7] dark:bg-[#1F2933]" />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );
