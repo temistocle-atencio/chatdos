@@ -2386,42 +2386,8 @@ export const ChatPage: React.FC = () => {
     return null;
   };
 
-  if (loadingPartner) {
-    // Solo la primera vez en un celular nuevo: la forma del chat, sin ruedita
-    return (
-      <div className="flex-1 flex flex-col h-full min-h-0 w-full bg-[#F2F4F7] dark:bg-[#1F2933]" aria-label="Abriendo el chat">
-        <div
-          className="bg-[#003A73] px-3 flex items-center gap-2.5 shrink-0"
-          style={{ paddingTop: 'env(safe-area-inset-top)', height: 'calc(3.5rem + env(safe-area-inset-top))' }}
-        >
-          <div className="w-[38px] h-[38px] rounded-full bg-white/15 animate-pulse" />
-          <div className="h-3 w-28 rounded bg-white/15 animate-pulse" />
-        </div>
-        <BurbujasDeRelleno />
-      </div>
-    );
-  }
-
-  if (errorMsg || !partner) {
-    return (
-      <div className="p-4 bg-white dark:bg-[#253240] rounded-[5px] text-center border border-[#E3E7EC] dark:border-[#003A73] m-4">
-        <p className="text-sm font-['Inter'] text-[#B03030]">
-          {errorMsg || 'No se pudo cargar esta conversación.'}
-        </p>
-        {(
-          <button
-            onClick={() => navigate('/chats')}
-            className="mt-3 px-4 py-2 rounded-[5px] bg-[#005198] text-white text-xs font-['Poppins'] font-semibold"
-          >
-            Volver a Chats
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  const partnerName = partner.display_name || partner.username;
-  const hasPartnerKey = !!partner.public_key;
+  const partnerName = partner ? partner.display_name || partner.username : '';
+  const hasPartnerKey = !!partner?.public_key;
   const hasInputText = inputText.trim().length > 0;
 
   // Los mensajes temporales vencidos no se muestran (el servidor los borra al abrir)
@@ -2565,6 +2531,41 @@ export const ChatPage: React.FC = () => {
     };
   }, []);
 
+
+  // Las pantallas de "abriendo" y de error van DESPUÉS de todos los hooks (si no, React falla con el error #310)
+  if (loadingPartner) {
+    // Solo la primera vez en un celular nuevo: la forma del chat, sin ruedita
+    return (
+      <div className="flex-1 flex flex-col h-full min-h-0 w-full bg-[#F2F4F7] dark:bg-[#1F2933]" aria-label="Abriendo el chat">
+        <div
+          className="bg-[#003A73] px-3 flex items-center gap-2.5 shrink-0"
+          style={{ paddingTop: 'env(safe-area-inset-top)', height: 'calc(3.5rem + env(safe-area-inset-top))' }}
+        >
+          <div className="w-[38px] h-[38px] rounded-full bg-white/15 animate-pulse" />
+          <div className="h-3 w-28 rounded bg-white/15 animate-pulse" />
+        </div>
+        <BurbujasDeRelleno />
+      </div>
+    );
+  }
+
+  if (errorMsg || !partner) {
+    return (
+      <div className="p-4 bg-white dark:bg-[#253240] rounded-[5px] text-center border border-[#E3E7EC] dark:border-[#003A73] m-4">
+        <p className="text-sm font-['Inter'] text-[#B03030]">
+          {errorMsg || 'No se pudo cargar esta conversación.'}
+        </p>
+        {(
+          <button
+            onClick={() => navigate('/chats')}
+            className="mt-3 px-4 py-2 rounded-[5px] bg-[#005198] text-white text-xs font-['Poppins'] font-semibold"
+          >
+            Volver a Chats
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
